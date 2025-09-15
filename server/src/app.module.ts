@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { UserModule } from './user/user.module';
 import { AppController } from './app.controller';
+import { BoardModule } from './board/board.module';
 
 @Module({
   imports: [
@@ -18,10 +19,11 @@ import { AppController } from './app.controller';
         password: config.get('DB_PASSWORD'),
         database: config.get('DB_NAME'),
         autoLoadEntities: true,
-        synchronize: true, // ⚠️ auto-create schema in dev, disable in prod
+        synchronize: true,
       }),
     }),
     UserModule,
+    BoardModule,
   ],
   controllers: [AppController],
 })

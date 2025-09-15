@@ -1,0 +1,11 @@
+<h2>Boards</h2>
+
+<input [(ngModel)]="newBoardTitle" placeholder="Board Title" />
+<button (click)="addBoard()">Add Board</button>
+
+<ul>
+  <li *ngFor="let board of boards">
+    {{ board.title }}
+    <button (click)="deleteBoard(board.id)">Delete</button>
+  </li>
+</ul>

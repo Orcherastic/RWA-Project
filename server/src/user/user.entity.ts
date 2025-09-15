@@ -4,7 +4,9 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  OneToMany,
 } from 'typeorm';
+import { Board } from '../board/entities/board.entity';
 
 @Entity()
 export class User {
@@ -25,4 +27,7 @@ export class User {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @OneToMany(() => Board, (board) => board.owner)
+  boards: Board[];
 }
