@@ -1,6 +1,37 @@
 <h2>Users</h2>
+
+<!-- Create User Form -->
+<form (ngSubmit)="addUser()">
+  <label for="email">Email:</label>
+  <input type="email" [(ngModel)]="newUser.email" name="email" required />
+
+  <label for="password">Password:</label>
+  <input type="password" [(ngModel)]="newUser.password" name="password" required />
+
+  <label for="displayName">Display Name:</label>
+  <input type="text" [(ngModel)]="newUser.displayName" name="displayName" required />
+
+  <button type="submit">Add User</button>
+</form>
+
+<hr />
+
+<!-- Show Users -->
 <ul>
   <li *ngFor="let user of users">
-    {{ user.id }} - {{ user.displayName }} ({{ user.email }})
+    <div *ngIf="editingUser?.id !== user.id">
+      {{ user.id }} - {{ user.displayName }} ({{ user.email }})
+      <button (click)="startEdit(user)">Edit</button>
+      <button (click)="deleteUser(user.id!)">Delete</button>
+    </div>
+
+    <div *ngIf="editingUser?.id === user.id">
+      <input [(ngModel)]="editingUser!.displayName" placeholder="Name">
+      <input [(ngModel)]="editingUser!.email" placeholder="Email">
+      <button (click)="saveEdit()">Save</button>
+      <button (click)="cancelEdit()">Cancel</button>
+    </div>
   </li>
 </ul>
+
+<p *ngIf="users.length === 0">No users found.</p>
