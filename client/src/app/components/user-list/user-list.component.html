@@ -1,37 +1,36 @@
-<h2>Users</h2>
+<h2>User List</h2>
 
-<!-- Create User Form -->
-<form (ngSubmit)="addUser()">
-  <label for="email">Email:</label>
-  <input type="email" [(ngModel)]="newUser.email" name="email" required />
-
-  <label for="password">Password:</label>
-  <input type="password" [(ngModel)]="newUser.password" name="password" required />
-
-  <label for="displayName">Display Name:</label>
-  <input type="text" [(ngModel)]="newUser.displayName" name="displayName" required />
-
-  <button type="submit">Add User</button>
-</form>
-
-<hr />
-
-<!-- Show Users -->
 <ul>
   <li *ngFor="let user of users">
-    <div *ngIf="editingUser?.id !== user.id">
-      {{ user.id }} - {{ user.displayName }} ({{ user.email }})
-      <button (click)="startEdit(user)">Edit</button>
-      <button (click)="deleteUser(user.id!)">Delete</button>
-    </div>
-
-    <div *ngIf="editingUser?.id === user.id">
-      <input [(ngModel)]="editingUser!.displayName" placeholder="Name">
-      <input [(ngModel)]="editingUser!.email" placeholder="Email">
-      <button (click)="saveEdit()">Save</button>
-      <button (click)="cancelEdit()">Cancel</button>
-    </div>
+    {{ user.displayName }} ({{ user.email }})
+    <button (click)="editUser(user)">Edit</button>
+    <button (click)="deleteUser(user.id)">Delete</button>
   </li>
 </ul>
+
+<h3>Add User</h3>
+<form (ngSubmit)="addUser()">
+  <label for="displayName">Display Name:</label>
+  <input [(ngModel)]="newUser.displayName" name="displayName" required />
+
+  <label for="email">Email:</label>
+  <input [(ngModel)]="newUser.email" name="email" required />
+
+  <button type="submit">Add</button>
+</form>
+
+<div *ngIf="editingUser">
+  <h3>Edit User</h3>
+  <form (ngSubmit)="saveUser()">
+    <label for="displayName">Display Name:</label>
+    <input [(ngModel)]="editingUser.displayName" name="editDisplayName" required />
+
+    <label for="email">Email:</label>
+    <input [(ngModel)]="editingUser.email" name="editEmail" required />
+
+    <button type="submit">Save</button>
+    <button type="button" (click)="cancelEdit()">Cancel</button>
+  </form>
+</div>
 
 <p *ngIf="users.length === 0">No users found.</p>

@@ -1,13 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
-
-export interface User {
-  id?: number;
-  email: string;
-  password: string;
-  displayName: string;
-}
+import { User } from '../models/user';
 
 @Injectable({
   providedIn: 'root'
@@ -30,7 +24,12 @@ export class UserService {
   }
 
   updateUser(id: number, user: Partial<User>): Observable<User> {
-    return this.http.put<User>(`${this.apiUrl}/${id}`, user);
+
+    const payload: Partial<User> = {
+      displayName: user.displayName,
+      email: user.email
+    };
+    return this.http.put<User>(`${this.apiUrl}/${id}`, payload);
   }
 
   deleteUser(id: number): Observable<void> {

@@ -17,7 +17,9 @@ export class UserService {
   }
 
   async create(dto: CreateUserDto) {
-    const hashed = await bcrypt.hash(dto.password, 10);
+    const plainPassword = dto.password || 'default123';
+    const hashed = await bcrypt.hash(plainPassword, 10);
+
     const user = this.repo.create({ ...dto, password: hashed });
     const saved = await this.repo.save(user);
     return this.sanitize(saved);
@@ -40,14 +42,14 @@ export class UserService {
 
   async update(id: number, dto: UpdateUserDto) {
     const user = await this.repo.findOneBy({ id });
-    if (!user) throw new NotFoundException(`User ${id} not found`);
+    if (!user) throw new Error('User not found');
 
     if (dto.password) {
       dto.password = await bcrypt.hash(dto.password, 10);
     }
 
-    const merged = this.repo.merge(user, dto);
-    const saved = await this.repo.save(merged);
+    const updated = Object.assign(user, dto);
+    const saved = await this.repo.save(updated);
     return this.sanitize(saved);
   }
 

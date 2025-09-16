@@ -1,75 +1,65 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms'; 
-import { UserService, User } from '../../services/user.service';
+import { UserService } from '../../services/user.service';
+import { User } from '../../models/user';
 
 @Component({
   selector: 'app-user-list',
   standalone: true,
   imports: [CommonModule, FormsModule],
-  templateUrl: './user-list.component.html'
+  templateUrl: './user-list.component.html',
+  styleUrls: ['./user-list.scss']
 })
 export class UserListComponent implements OnInit {
   users: User[] = [];
-
-  // form model
-  newUser: User = {
-    email: '',
-    password: '',
-    displayName: ''
-  };
+  newUser: Partial<User> = { displayName: '', email: '' };
+  editingUser: User | null = null;
 
   constructor(private readonly userService: UserService) {}
 
-  ngOnInit() {
+  ngOnInit(): void {
     this.loadUsers();
   }
 
-  loadUsers() {
-    this.userService.getUsers().subscribe(data => {
+  loadUsers(): void {
+    this.userService.getUsers().subscribe((data) => {
       this.users = data;
     });
   }
 
-  addUser() {
-    if (!this.newUser.email || !this.newUser.password || !this.newUser.displayName) {
-      alert('All fields are required');
-      return;
+  addUser(): void {
+    if (this.newUser.displayName && this.newUser.email) {
+      this.userService.createUser(this.newUser as User).subscribe((created) => {
+        this.users.push(created);
+        this.newUser = { displayName: '', email: '' };
+      });
     }
-
-    this.userService.createUser(this.newUser).subscribe(() => {
-      this.newUser = { email: '', password: '', displayName: '' }; // reset form
-      this.loadUsers(); // refresh list
-    });
   }
 
-  deleteUser(id: number) {  
+  deleteUser(id: number): void {
     this.userService.deleteUser(id).subscribe(() => {
-      this.loadUsers(); // refresh list after deletion
+      this.users = this.users.filter((u) => u.id !== id);
     });
   }
 
-  editingUser: User | null = null;
-
-  startEdit(user: User) {
-    this.editingUser = { ...user }; // copy user into editing mode
+  editUser(user: User): void {
+    this.editingUser = { ...user };
   }
 
-  saveEdit() {
-    if (!this.editingUser?.id) return;
-  
-    const { displayName, email } = this.editingUser;
-  
-    this.userService.updateUser(this.editingUser.id, { displayName, email }).subscribe({
-      next: () => {
+  saveUser(): void {
+    if (this.editingUser && this.editingUser.id) {
+      this.userService.updateUser(this.editingUser.id, this.editingUser).subscribe((updated) => {
+        const index = this.users.findIndex((u) => u.id === updated.id);
+        if (index !== -1) {
+          this.users[index] = updated;
+        }
         this.editingUser = null;
-        this.loadUsers();
-      },
-      error: (err) => console.error('Update failed:', err)
-    });
+      });
+    }
   }
 
-  cancelEdit() {
+  cancelEdit(): void {
     this.editingUser = null;
   }
 }

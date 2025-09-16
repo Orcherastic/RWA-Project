@@ -1,11 +1,19 @@
 <h2>Boards</h2>
 
 <input [(ngModel)]="newBoardTitle" placeholder="Board Title" />
+
+<select [(ngModel)]="selectedOwnerId">
+  <option [ngValue]="null">-- Select Owner --</option>
+  <option *ngFor="let user of users" [ngValue]="user.id">
+    {{ user.displayName }} ({{ user.email }})
+  </option>
+</select>
+
 <button (click)="addBoard()">Add Board</button>
 
 <ul>
   <li *ngFor="let board of boards">
-    {{ board.title }}
+    {{ board.title }} (Owner: {{ board.ownerId }})
     <button (click)="deleteBoard(board.id)">Delete</button>
   </li>
 </ul>
