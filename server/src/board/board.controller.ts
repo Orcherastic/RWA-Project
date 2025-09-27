@@ -6,18 +6,27 @@ import {
   Patch,
   Param,
   Delete,
+  UseGuards,
+  Req,
 } from '@nestjs/common';
 import { BoardService } from './board.service';
 import { CreateBoardDto } from './dto/create-board.dto';
 import { UpdateBoardDto } from './dto/update-board.dto';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
+@UseGuards(JwtAuthGuard)
 @Controller('boards')
 export class BoardController {
   constructor(private readonly boardService: BoardService) {}
 
   @Post()
-  create(@Body() createBoardDto: CreateBoardDto) {
-    return this.boardService.create(createBoardDto);
+  async create(@Req() req, @Body() dto: CreateBoardDto) {
+    // assume JwtStrategy validated token and attached user payload with userId
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+    const ownerId = req.user.userId ?? req.user.sub ?? req.user.id;
+    // call boardService with ownerId forced from token
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    return this.boardService.create({ title: dto.title, ownerId });
   }
 
   @Get()

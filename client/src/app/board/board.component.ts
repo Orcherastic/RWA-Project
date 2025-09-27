@@ -18,6 +18,7 @@ export class BoardComponent implements OnInit {
   users: User[] = [];
   newBoardTitle = '';
   selectedOwnerId: number | null = null;
+  auth: any;
 
     constructor(
     private readonly boardService: BoardService,
@@ -42,13 +43,12 @@ export class BoardComponent implements OnInit {
   }
 
   addBoard() {
-    if (!this.newBoardTitle.trim() || !this.selectedOwnerId) return;
-
-    const board = {
-      title: this.newBoardTitle,
-      ownerId: this.selectedOwnerId
-    };
-
+    const current = this.auth.getUser();
+    if (!current?.id) {
+      alert('You must be logged in to create a board');
+      return;
+    }
+    const board = { title: this.newBoardTitle };
     this.boardService.createBoard(board).subscribe(() => {
       this.newBoardTitle = '';
       this.selectedOwnerId = null;
