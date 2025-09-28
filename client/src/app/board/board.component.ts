@@ -19,6 +19,8 @@ export class BoardComponent implements OnInit {
   newBoardTitle = '';
   selectedOwnerId: number | null = null;
   auth: any;
+  authService: any;
+  http: any;
 
     constructor(
     private readonly boardService: BoardService,
@@ -42,18 +44,13 @@ export class BoardComponent implements OnInit {
     });
   }
 
-  addBoard() {
-    const current = this.auth.getUser();
-    if (!current?.id) {
-      alert('You must be logged in to create a board');
-      return;
-    }
-    const board = { title: this.newBoardTitle };
-    this.boardService.createBoard(board).subscribe(() => {
-      this.newBoardTitle = '';
-      this.selectedOwnerId = null;
-      this.loadBoards();
-    });
+  createBoard(title: string) {
+    const userId = this.authService.getUserId(); // decode from JWT
+    this.http.post('http://localhost:3000/boards', { title, ownerId: userId })
+      .subscribe({
+        next: () => this.loadBoards(),
+        error: (err: any) => console.error('Board creation failed', err),
+      });
   }
 
   deleteBoard(id: number) {

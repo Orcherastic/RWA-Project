@@ -28,4 +28,16 @@ export class AuthService {
   getToken(): string | null {
     return localStorage.getItem('token');
   }
+
+  getUserId(): number | null {
+    const token = localStorage.getItem('token');
+    if (!token) return null;
+
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.sub;  // sub = userId (from jwt.strategy.ts)
+    } catch {
+      return null;
+    }
+  }
 }
