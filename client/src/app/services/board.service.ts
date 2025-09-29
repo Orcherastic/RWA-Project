@@ -1,7 +1,6 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { Board } from '../models/board';
 
 @Injectable({
   providedIn: 'root'
@@ -11,12 +10,12 @@ export class BoardService {
 
   constructor(private readonly http: HttpClient) {}
 
-  getBoards(): Observable<Board[]> {
-    return this.http.get<Board[]>(this.apiUrl);
+  getBoards(): Observable<any[]> {
+    return this.http.get<any[]>(this.apiUrl);
   }
 
-  createBoard(board: Partial<Board>): Observable<Board> {
-    return this.http.post<Board>(this.apiUrl, board);
+  createBoard(title: string, ownerId: number): Observable<any> {
+    return this.http.post(this.apiUrl, { title, ownerId });
   }
 
   deleteBoard(id: number): Observable<void> {

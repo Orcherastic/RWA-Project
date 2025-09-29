@@ -1,9 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Board } from './entities/board.entity';
-import { CreateBoardDto } from './dto/create-board.dto';
-import { UpdateBoardDto } from './dto/update-board.dto';
 import { User } from '../user/user.entity';
 
 @Injectable()
@@ -15,28 +17,31 @@ export class BoardService {
     private readonly userRepo: Repository<User>,
   ) {}
 
-  async create(dto: CreateBoardDto) {
-    const user = await this.userRepo.findOneBy({ id: dto.ownerId });
-    if (!user) throw new Error('User not found');
-    const board = this.boardRepo.create({ title: dto.title, owner: user });
+  async findBoardsByUser(userId: number): Promise<Board[]> {
+    return this.boardRepo.find({
+      where: { owner: { id: userId } },
+      relations: ['owner'],
+    });
+  }
+
+  async createBoard(title: string, userId: number): Promise<Board> {
+    const owner = await this.userRepo.findOneBy({ id: userId });
+    if (!owner) throw new NotFoundException('User not found');
+
+    const board = this.boardRepo.create({ title, owner });
     return this.boardRepo.save(board);
   }
 
-  findAll() {
-    return this.boardRepo.find({ relations: ['owner'] });
-  }
+  async deleteBoard(boardId: number, userId: number): Promise<void> {
+    const board = await this.boardRepo.findOne({
+      where: { id: boardId },
+      relations: ['owner'],
+    });
+    if (!board) throw new NotFoundException('Board not found');
+    if (board.owner.id !== userId) {
+      throw new ForbiddenException('You are not allowed to delete this board');
+    }
 
-  findOne(id: number) {
-    return this.boardRepo.findOne({ where: { id }, relations: ['owner'] });
-  }
-
-  async update(id: number, dto: UpdateBoardDto) {
-    await this.boardRepo.update(id, dto);
-    return this.findOne(id);
-  }
-
-  async remove(id: number) {
-    await this.boardRepo.delete(id);
-    return { deleted: true };
+    await this.boardRepo.remove(board);
   }
 }

@@ -5,6 +5,7 @@ import { BoardService } from '../services/board.service';
 import { Board } from '../models/board';
 import { UserService } from '../services/user.service';
 import { User } from '../models/user';
+import { AuthService } from '../auth/auth.service';
 
 @Component({
   selector: 'app-board',
@@ -19,12 +20,12 @@ export class BoardComponent implements OnInit {
   newBoardTitle = '';
   selectedOwnerId: number | null = null;
   auth: any;
-  authService: any;
   http: any;
 
     constructor(
     private readonly boardService: BoardService,
-    private readonly userService: UserService
+    private readonly userService: UserService,
+    private readonly authService: AuthService
   ) {}
 
   ngOnInit() {
@@ -44,13 +45,17 @@ export class BoardComponent implements OnInit {
     });
   }
 
-  createBoard(title: string) {
-    const userId = this.authService.getUserId(); // decode from JWT
-    this.http.post('http://localhost:3000/boards', { title, ownerId: userId })
-      .subscribe({
-        next: () => this.loadBoards(),
-        error: (err: any) => console.error('Board creation failed', err),
-      });
+  createBoard() {
+    const userId = this.auth.getUserId();
+    if (!userId) return;
+  
+    this.boardService.createBoard(this.newBoardTitle, userId).subscribe({
+      next: (board) => {
+        this.boards.push(board);
+        this.newBoardTitle = '';
+      },
+      error: (err) => console.error(err)
+    });
   }
 
   deleteBoard(id: number) {

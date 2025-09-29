@@ -2,50 +2,37 @@ import {
   Controller,
   Get,
   Post,
-  Body,
-  Patch,
-  Param,
   Delete,
+  Param,
+  Body,
   UseGuards,
-  Req,
+  Request,
 } from '@nestjs/common';
 import { BoardService } from './board.service';
-import { CreateBoardDto } from './dto/create-board.dto';
-import { UpdateBoardDto } from './dto/update-board.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
-@UseGuards(JwtAuthGuard)
 @Controller('boards')
 export class BoardController {
   constructor(private readonly boardService: BoardService) {}
 
-  @Post()
-  async create(@Req() req, @Body() dto: CreateBoardDto) {
-    // assume JwtStrategy validated token and attached user payload with userId
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-    const ownerId = req.user.userId ?? req.user.sub ?? req.user.id;
-    // call boardService with ownerId forced from token
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    return this.boardService.create({ title: dto.title, ownerId });
-  }
-
+  @UseGuards(JwtAuthGuard)
   @Get()
-  findAll() {
-    return this.boardService.findAll();
+  findAll(@Request() req) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument
+    return this.boardService.findBoardsByUser(req.user.userId);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.boardService.findOne(+id);
+  @UseGuards(JwtAuthGuard)
+  @Post()
+  async create(@Body() dto: { title: string }, @Request() req) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access
+    return this.boardService.createBoard(dto.title, req.user.userId);
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateBoardDto: UpdateBoardDto) {
-    return this.boardService.update(+id, updateBoardDto);
-  }
-
+  @UseGuards(JwtAuthGuard)
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.boardService.remove(+id);
+  remove(@Param('id') id: number, @Request() req) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument
+    return this.boardService.deleteBoard(id, req.user.userId);
   }
 }

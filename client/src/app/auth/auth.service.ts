@@ -1,10 +1,13 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { LoginRequest, AuthResponse, RegisterRequest } from '../models/user';
+import { LoginRequest, AuthResponse, RegisterRequest, User } from '../models/user';
 import { Observable } from 'rxjs';
 
 @Injectable({ providedIn: 'root' })
 export class AuthService {
+  saveUser(user: User) {
+    localStorage.setItem('user', JSON.stringify(user));
+  }
   private readonly baseUrl = 'http://localhost:3000/auth';
 
   constructor(private readonly http: HttpClient) {}
