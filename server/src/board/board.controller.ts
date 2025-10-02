@@ -7,9 +7,14 @@ import {
   Body,
   UseGuards,
   Request,
+  Req,
 } from '@nestjs/common';
 import { BoardService } from './board.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+
+interface AuthRequest extends Request {
+  user: { userId: number; email: string };
+}
 
 @Controller('boards')
 export class BoardController {
@@ -22,11 +27,11 @@ export class BoardController {
     return this.boardService.findBoardsByUser(req.user.userId);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Post()
-  async create(@Body() dto: { title: string }, @Request() req) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access
-    return this.boardService.createBoard(dto.title, req.user.userId);
+  @UseGuards(JwtAuthGuard)
+  async create(@Body('title') title: string, @Req() req: AuthRequest) {
+    const userId = req.user.userId;
+    return this.boardService.createBoard(title, userId);
   }
 
   @UseGuards(JwtAuthGuard)
