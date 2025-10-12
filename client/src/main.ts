@@ -4,7 +4,7 @@ import { provideRouter } from '@angular/router';
 
 import { App } from './app/app';
 import { routes } from './app/app.routes';
-import { AuthInterceptor } from './app/interceprots/auth.interceptor';
+import { AuthInterceptor } from './app/interceptors/auth.interceptor';
 
 bootstrapApplication(App, {
   providers: [

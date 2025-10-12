@@ -12,7 +12,7 @@ import { JwtStrategy } from './jwt.strategy';
     UserModule,
     PassportModule,
     JwtModule.register({
-      secret: 'SECRET_KEY',
+      secret: 'yourSecretKey',
       signOptions: { expiresIn: '1h' },
     }),
   ],

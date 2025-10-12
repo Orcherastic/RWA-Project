@@ -32,6 +32,16 @@ export class BoardService {
     return this.boardRepo.save(board);
   }
 
+  async updateTitle(boardId: number, newTitle: string, userId: number) {
+    const board = await this.boardRepo.findOne({ where: { id: boardId } });
+    if (!board) throw new NotFoundException('Board not found');
+    if (board.owner.id !== userId)
+      throw new ForbiddenException('Not your board');
+
+    board.title = newTitle;
+    return this.boardRepo.save(board);
+  }
+
   async deleteBoard(boardId: number, userId: number): Promise<void> {
     const board = await this.boardRepo.findOne({
       where: { id: boardId },
