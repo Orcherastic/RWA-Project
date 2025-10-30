@@ -3,10 +3,11 @@
 <input [(ngModel)]="newBoardTitle" placeholder="Board title" />
 <button (click)="createBoard()">Create Board</button>
 
-<ul>
-  <li *ngFor="let board of boards">
+<div class="board-list">
+  <div *ngFor="let board of boards" class="board-item">
     <input [(ngModel)]="board.title" />
+    <button (click)="openBoard(board.id)">Open</button>
     <button (click)="renameBoard(board, board.title)">Rename</button>
-    <button (click)="deleteBoard(board)">Delete</button>
-  </li>
-</ul>
+    <button (click)="deleteBoard(board.id)">Delete</button>
+  </div>
+</div>

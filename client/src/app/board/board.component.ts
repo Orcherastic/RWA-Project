@@ -2,6 +2,7 @@ import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { BoardService } from '../services/board.service';
+import { Router } from '@angular/router';
 
 @Component({
   selector: 'app-board',
@@ -14,7 +15,9 @@ export class BoardComponent {
   newBoardTitle = '';
   boards: any[] = [];
 
-  constructor(private readonly boardService: BoardService) {}
+  constructor(private readonly boardService: BoardService,
+      private readonly router: Router
+  ) {}
 
   ngOnInit() {
     this.loadBoards();
@@ -35,6 +38,10 @@ export class BoardComponent {
       },
       error: (err) => console.error('Error creating board:', err)
     });
+  }
+
+  openBoard(boardId: number) {
+    this.router.navigate(['/boards', boardId]);
   }
 
   renameBoard(board: any, newTitle: string) {
