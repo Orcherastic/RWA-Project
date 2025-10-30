@@ -28,6 +28,10 @@ export class BoardService {
     return this.http.post(this.apiUrl, { title, ownerId: userId });
   }
 
+  renameBoard(id: number, newTitle: string): Observable<any> {
+    return this.http.patch<any>(`${this.apiUrl}/${id}`, { title: newTitle });
+  }
+
   deleteBoard(id: number): Observable<void> {
     return this.http.delete<void>(`${this.apiUrl}/${id}`);
   }

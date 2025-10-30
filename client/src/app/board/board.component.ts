@@ -36,4 +36,20 @@ export class BoardComponent {
       error: (err) => console.error('Error creating board:', err)
     });
   }
+
+  renameBoard(board: any, newTitle: string) {
+    if (!newTitle.trim()) return;
+    this.boardService.renameBoard(board.id, newTitle).subscribe({
+      next: () => this.loadBoards(),
+      error: (err) => console.error('Failed to rename board:', err),
+    });
+  }
+
+  deleteBoard(board: any) {
+    if (!confirm(`Delete board "${board.title}"?`)) return;
+    this.boardService.deleteBoard(board.id).subscribe({
+      next: () => this.loadBoards(),
+      error: (err) => console.error('Failed to delete board:', err)
+    });
+  }
 }

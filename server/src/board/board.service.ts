@@ -17,6 +17,12 @@ export class BoardService {
     private readonly userRepo: Repository<User>,
   ) {}
 
+  async findAllForUser(userId: number) {
+    return this.boardRepo.find({
+      where: { owner: { id: userId } },
+    });
+  }
+
   async findBoardsByUser(userId: number): Promise<Board[]> {
     return this.boardRepo.find({
       where: { owner: { id: userId } },
@@ -33,7 +39,11 @@ export class BoardService {
   }
 
   async updateTitle(boardId: number, newTitle: string, userId: number) {
-    const board = await this.boardRepo.findOne({ where: { id: boardId } });
+    const board = await this.boardRepo.findOne({
+      where: { id: boardId },
+      relations: ['owner'],
+    });
+
     if (!board) throw new NotFoundException('Board not found');
     if (board.owner.id !== userId)
       throw new ForbiddenException('Not your board');
