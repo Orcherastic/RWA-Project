@@ -1,9 +1,13 @@
 import { Component, ElementRef, ViewChild, AfterViewInit, HostListener} from '@angular/core';
+import { FormsModule } from '@angular/forms';
+import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { SocketService } from '../services/socket.service';
 
 @Component({
   selector: 'app-whiteboard',
+  standalone: true,
+  imports: [CommonModule, FormsModule],
   templateUrl: './whiteboard.component.html',
   styleUrls: ['./whiteboard.component.scss'],
 })
@@ -28,48 +32,88 @@ export class WhiteboardComponent implements AfterViewInit {
   //   // });
   // }
 
-    ngAfterViewInit() {
+  ngAfterViewInit() {
     const canvas = this.canvasRef.nativeElement;
     this.ctx = canvas.getContext('2d')!;
-    this.ctx.lineCap = 'round';
+    if (!this.ctx) throw new Error('Canvas 2D context not available');
 
-    // Listen for drawing + clearing events
-    this.socketService.listen('draw').subscribe((data) => this.drawFromServer(data));
+    this.ctx.lineCap = 'round';
+    this.ctx.strokeStyle = this.currentColor;
+    this.ctx.lineWidth = this.lineWidth;
+
+    this.socketService.listen('draw').subscribe((data: any) => this.drawFromServer(data));
     this.socketService.listen('clear').subscribe(() => this.clearLocal());
+  }
+
+  private getCanvasCoords(event: MouseEvent) {
+    const canvasEl = this.canvasRef.nativeElement;
+    const rect = canvasEl.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const inside = x >= 0 && y >= 0 && x <= rect.width && y <= rect.height;
+    return { x, y, inside };
   }
 
   @HostListener('mousedown', ['$event'])
   onMouseDown(event: MouseEvent) {
+    const { x, y, inside } = this.getCanvasCoords(event);
+    if (!inside) return;
     this.drawing = true;
-    const { offsetX, offsetY } = event;
+
     this.ctx.beginPath();
-    this.ctx.moveTo(offsetX, offsetY);
+    this.ctx.moveTo(x, y);
+
+    // set current stroke style before emitting
     this.ctx.strokeStyle = this.currentColor;
     this.ctx.lineWidth = this.lineWidth;
 
+    // emit begin event
     this.socketService.emit('draw', {
       type: 'begin',
-      x: offsetX,
-      y: offsetY,
+      x,
+      y,
       color: this.currentColor,
-      lineWidth: this.lineWidth,
+      lineWidth: this.lineWidth
     });
   }
 
   @HostListener('mousemove', ['$event'])
   onMouseMove(event: MouseEvent) {
     if (!this.drawing) return;
-    const { offsetX, offsetY } = event;
-    this.ctx.lineTo(offsetX, offsetY);
+
+    const { x, y, inside } = this.getCanvasCoords(event);
+    if (!inside) {
+      // If pointer left canvas while dragging, stop drawing to avoid stray lines
+      // (optional: you might want to set drawing=false only on mouseup or mouseleave)
+      this.drawing = false;
+      return;
+    }
+
+    // draw locally
+    this.ctx.lineTo(x, y);
     this.ctx.stroke();
 
+    // emit draw event for others
     this.socketService.emit('draw', {
       type: 'draw',
-      x: offsetX,
-      y: offsetY,
+      x,
+      y,
       color: this.currentColor,
-      lineWidth: this.lineWidth,
+      lineWidth: this.lineWidth
     });
+  }
+
+  onMouseUp() {
+    if (this.drawing) {
+      this.drawing = false;
+      // optional: end path
+      this.ctx.beginPath();
+    }
+  }
+
+  onMouseLeave() {
+    // make sure drawing stops if cursor leaves canvas
+    this.drawing = false;
   }
 
   @HostListener('mouseup')
@@ -80,9 +124,9 @@ export class WhiteboardComponent implements AfterViewInit {
 
   drawFromServer(data: any) {
     if (!this.ctx) return;
-
-    this.ctx.strokeStyle = data.color || '#000000';
-    this.ctx.lineWidth = data.lineWidth || 2;
+    // ensure styling is applied from the remote data
+    if (data.color) this.ctx.strokeStyle = data.color;
+    if (data.lineWidth) this.ctx.lineWidth = data.lineWidth;
 
     if (data.type === 'begin') {
       this.ctx.beginPath();

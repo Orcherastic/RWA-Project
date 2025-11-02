@@ -1,1 +1,24 @@
-<canvas #canvas width="800" height="600" style="border:1px solid black;"></canvas>
+<div class="toolbar">
+  <label>
+    Color:
+    <input type="color" [(ngModel)]="currentColor" />
+  </label>
+
+  <label>
+    Line width:
+    <input type="range" min="1" max="10" [(ngModel)]="lineWidth" />
+  </label>
+
+  <button (click)="clearBoard()">Clear</button>
+</div>
+
+<canvas
+  #canvas
+  width="800"
+  height="600"
+  style="border:1px solid black; display:block;"
+  (mousedown)="onMouseDown($event)"
+  (mousemove)="onMouseMove($event)"
+  (mouseup)="onMouseUp()"
+  (mouseleave)="onMouseLeave()"
+></canvas>
