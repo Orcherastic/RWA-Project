@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { SocketService } from '../services/socket.service';
+import { BoardService } from '../services/board.service';
 
 @Component({
   selector: 'app-whiteboard',
@@ -16,15 +17,17 @@ export class WhiteboardComponent implements AfterViewInit {
   private ctx!: CanvasRenderingContext2D;
   private drawing = false;
   boardId!: number;
-
-  constructor(
-    private readonly route: ActivatedRoute,
-    private readonly socketService: SocketService
-  ) {}
+  private strokes: any[] = [];
+  private saveInterval: any;
 
   currentColor = '#000000';
   lineWidth = 2;
 
+  constructor(
+    private readonly route: ActivatedRoute,
+    private readonly socketService: SocketService,
+    private readonly boardService: BoardService
+  ) {}
   // ngOnInit() {
   //     this.boardId = Number(this.route.snapshot.paramMap.get('id'));
   //   //   this.boardService.getBoard(this.boardId).subscribe(board => {
@@ -32,17 +35,47 @@ export class WhiteboardComponent implements AfterViewInit {
   //   // });
   // }
 
+  private loadBoardContent() {
+    this.boardService.getBoardById(this.boardId).subscribe({
+      next: (board) => {
+        if (board.content) {
+          this.strokes = board.content;
+          this.redrawAll();
+        }
+      },
+      error: (err) => console.error('Error loading board:', err),
+    });
+  }
+
+  private saveBoardContent() {
+    this.boardService.updateBoardContent(this.boardId, this.strokes).subscribe({
+      error: (err) => console.error('Error saving board content:', err),
+    });
+  }
+
+  private redrawAll() {
+    for (const stroke of this.strokes) {
+      this.ctx.strokeStyle = stroke.color;
+      this.ctx.lineWidth = stroke.lineWidth;
+      this.ctx.beginPath();
+      this.ctx.moveTo(stroke.fromX, stroke.fromY);
+      this.ctx.lineTo(stroke.toX, stroke.toY);
+      this.ctx.stroke();
+    }
+  }
+
   ngAfterViewInit() {
     const canvas = this.canvasRef.nativeElement;
     this.ctx = canvas.getContext('2d')!;
-    if (!this.ctx) throw new Error('Canvas 2D context not available');
+    this.boardId = Number(this.route.snapshot.paramMap.get('id'));
 
-    this.ctx.lineCap = 'round';
-    this.ctx.strokeStyle = this.currentColor;
-    this.ctx.lineWidth = this.lineWidth;
+    this.loadBoardContent();
 
-    this.socketService.listen('draw').subscribe((data: any) => this.drawFromServer(data));
-    this.socketService.listen('clear').subscribe(() => this.clearLocal());
+    // Live drawing from other users
+    this.socketService.listen('draw').subscribe((data) => this.drawFromServer(data));
+
+    // Auto-save every 5 seconds
+    this.saveInterval = setInterval(() => this.saveBoardContent(), 5000);
   }
 
   private getCanvasCoords(event: MouseEvent) {

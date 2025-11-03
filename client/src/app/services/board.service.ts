@@ -18,6 +18,10 @@ export class BoardService {
     return this.http.get<any[]>(this.apiUrl);
   }
 
+  getBoardById(boardId: number) {
+    return this.http.get<any>(`http://localhost:3000/boards/${boardId}`);
+  }
+
   createBoard(title: string): Observable<any> {
     const userId = this.authService.getUserId();
 
@@ -26,6 +30,10 @@ export class BoardService {
     }
 
     return this.http.post(this.apiUrl, { title, ownerId: userId });
+  }
+
+  updateBoardContent(boardId: number, content: any) {
+    return this.http.put(`http://localhost:3000/boards/${boardId}/content`, { content });
   }
 
   renameBoard(id: number, newTitle: string): Observable<any> {

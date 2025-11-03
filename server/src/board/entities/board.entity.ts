@@ -20,4 +20,7 @@ export class Board {
 
   @ManyToOne(() => User, (user) => user.boards, { onDelete: 'CASCADE' })
   owner: User;
+
+  @Column({ type: 'json', nullable: true })
+  content?: any;
 }

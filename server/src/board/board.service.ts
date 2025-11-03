@@ -52,6 +52,21 @@ export class BoardService {
     return this.boardRepo.save(board);
   }
 
+  async updateContent(boardId: number, content: any, userId: number) {
+    const board = await this.boardRepo.findOne({
+      where: { id: boardId },
+      relations: ['owner'],
+    });
+
+    if (!board) throw new NotFoundException('Board not found');
+    if (board.owner.id !== userId)
+      throw new ForbiddenException('Not your board');
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    board.content = content;
+    return this.boardRepo.save(board);
+  }
+
   async deleteBoard(boardId: number, userId: number): Promise<void> {
     const board = await this.boardRepo.findOne({
       where: { id: boardId },

@@ -9,6 +9,7 @@ import {
   Request,
   Req,
   Patch,
+  Put,
 } from '@nestjs/common';
 import { BoardService } from './board.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -45,6 +46,17 @@ export class BoardController {
   ) {
     const userId = req.user.userId;
     return this.boardService.updateTitle(+id, body.title, userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put(':id/content')
+  async updateBoardContent(
+    @Param('id') id: string,
+    @Body('content') content: any,
+    @Req() req: AuthRequest,
+  ) {
+    const userId = req.user.userId;
+    return this.boardService.updateContent(Number(id), content, userId);
   }
 
   @UseGuards(JwtAuthGuard)
