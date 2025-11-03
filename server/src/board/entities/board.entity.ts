@@ -22,5 +22,5 @@ export class Board {
   owner: User;
 
   @Column({ type: 'json', nullable: true })
-  content?: any;
+  content: string;
 }

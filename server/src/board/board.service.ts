@@ -17,17 +17,24 @@ export class BoardService {
     private readonly userRepo: Repository<User>,
   ) {}
 
-  async findAllForUser(userId: number) {
-    return this.boardRepo.find({
-      where: { owner: { id: userId } },
-    });
-  }
-
-  async findBoardsByUser(userId: number): Promise<Board[]> {
+  async findAllForUser(userId: number): Promise<Board[]> {
     return this.boardRepo.find({
       where: { owner: { id: userId } },
       relations: ['owner'],
     });
+  }
+
+  async findOneById(id: number, userId: number): Promise<Board> {
+    const board = await this.boardRepo.findOne({
+      where: { id },
+      relations: ['owner'],
+    });
+
+    if (!board) throw new NotFoundException('Board not found');
+    if (board.owner.id !== userId)
+      throw new ForbiddenException('Not your board');
+
+    return board;
   }
 
   async createBoard(title: string, userId: number): Promise<Board> {
@@ -52,9 +59,9 @@ export class BoardService {
     return this.boardRepo.save(board);
   }
 
-  async updateContent(boardId: number, content: any, userId: number) {
+  async updateContent(boardId: number, content: string, userId: number) {
     const board = await this.boardRepo.findOne({
-      where: { id: boardId },
+      where: { id: boardId, owner: { id: userId } },
       relations: ['owner'],
     });
 
@@ -62,7 +69,6 @@ export class BoardService {
     if (board.owner.id !== userId)
       throw new ForbiddenException('Not your board');
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     board.content = content;
     return this.boardRepo.save(board);
   }

@@ -19,26 +19,29 @@ interface AuthRequest extends Request {
 }
 
 @Controller('boards')
+@UseGuards(JwtAuthGuard)
 export class BoardController {
   constructor(private readonly boardService: BoardService) {}
 
-  @UseGuards(JwtAuthGuard)
   @Get()
-  // eslint-disable-next-line @typescript-eslint/require-await
   async findAll(@Req() req: AuthRequest) {
     const userId = req.user.userId;
     return this.boardService.findAllForUser(userId);
   }
 
+  @Get(':id')
+  findOne(@Param('id') id: string, @Req() req: AuthRequest) {
+    const userId = req.user.userId;
+    return this.boardService.findOneById(Number(id), userId);
+  }
+
   @Post()
-  @UseGuards(JwtAuthGuard)
   async create(@Body('title') title: string, @Req() req: AuthRequest) {
     const userId = req.user.userId;
     return this.boardService.createBoard(title, userId);
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard)
   async updateTitle(
     @Req() req: AuthRequest,
     @Param('id') id: string,
@@ -48,18 +51,16 @@ export class BoardController {
     return this.boardService.updateTitle(+id, body.title, userId);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Put(':id/content')
   async updateBoardContent(
     @Param('id') id: string,
-    @Body('content') content: any,
+    @Body('content') content: string,
     @Req() req: AuthRequest,
   ) {
     const userId = req.user.userId;
     return this.boardService.updateContent(Number(id), content, userId);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Delete(':id')
   remove(@Param('id') id: number, @Request() req) {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument

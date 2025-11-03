@@ -32,7 +32,7 @@ export class BoardService {
     return this.http.post(this.apiUrl, { title, ownerId: userId });
   }
 
-  updateBoardContent(boardId: number, content: any) {
+  updateBoardContent(boardId: number, content: string) {
     return this.http.put(`http://localhost:3000/boards/${boardId}/content`, { content });
   }
 

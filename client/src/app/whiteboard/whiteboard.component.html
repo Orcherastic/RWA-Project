@@ -1,20 +1,26 @@
-<div style="margin-bottom: 10px;">
+<div class="toolbar" style="margin-bottom: 10px; display: flex; gap: 10px; align-items: center;">
   <label>
     Color:
-  <input type="color" [(ngModel)]="currentColor" />
-   </label>
+    <input type="color" [(ngModel)]="currentColor" />
+  </label>
+
   <label>
     Line width:
-  <input type="number" [(ngModel)]="lineWidth" min="1" max="10" />
-   </label>
+    <input type="number" [(ngModel)]="lineWidth" min="1" max="20" />
+  </label>
+
+  <button (click)="clearBoard()">
+    Clear Board
+  </button>
 </div>
 
 <canvas
   #canvas
   width="800"
   height="600"
-  style="border:1px solid black;"
+  style="border: 1px solid black;"
   (mousedown)="onMouseDown($event)"
-  (mouseup)="onMouseUp()"
-  (mousemove)="onMouseMove($event)">
-</canvas>
+  (mousemove)="onMouseMove($event)"
+  (mouseup)="stopDrawing()"
+  (mouseleave)="stopDrawing()"
+></canvas>

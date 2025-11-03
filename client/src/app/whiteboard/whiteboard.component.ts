@@ -1,9 +1,10 @@
-import { Component, ElementRef, ViewChild, AfterViewInit, HostListener} from '@angular/core';
+import { Component, ElementRef, ViewChild, AfterViewInit, HostListener, OnInit,} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { SocketService } from '../services/socket.service';
 import { BoardService } from '../services/board.service';
+import { debounceTime, Subject } from 'rxjs';
 
 @Component({
   selector: 'app-whiteboard',
@@ -12,35 +13,56 @@ import { BoardService } from '../services/board.service';
   templateUrl: './whiteboard.component.html',
   styleUrls: ['./whiteboard.component.scss'],
 })
-export class WhiteboardComponent implements AfterViewInit {
+export class WhiteboardComponent implements AfterViewInit, OnInit {
   @ViewChild('canvas', { static: true }) canvasRef!: ElementRef<HTMLCanvasElement>;
+  private readonly saveSubject = new Subject<void>();
+  private readonly subscriptions: any[] = [];
   private ctx!: CanvasRenderingContext2D;
   private drawing = false;
   boardId!: number;
   private strokes: any[] = [];
-  private saveInterval: any;
 
   currentColor = '#000000';
   lineWidth = 2;
+
+  private lastX: number | null = null;
+  private lastY: number | null = null;
 
   constructor(
     private readonly route: ActivatedRoute,
     private readonly socketService: SocketService,
     private readonly boardService: BoardService
   ) {}
-  // ngOnInit() {
-  //     this.boardId = Number(this.route.snapshot.paramMap.get('id'));
-  //   //   this.boardService.getBoard(this.boardId).subscribe(board => {
-  //   //   this.boardTitle = board.title;
-  //   // });
-  // }
+  
+  ngOnInit() {
+    this.boardId = Number(this.route.snapshot.paramMap.get('id'));
+    this.loadBoardContent();
+    this.subscriptions.push(
+      this.saveSubject.pipe(debounceTime(1000)).subscribe(() => this.saveBoardContent())
+    );
+  }
+
+  ngAfterViewInit() {
+    const canvas = this.canvasRef.nativeElement;
+    this.ctx = canvas.getContext('2d')!;
+    this.boardId = Number(this.route.snapshot.paramMap.get('id'));
+
+    this.loadBoardContent();
+
+    // Live drawing from other users
+    this.socketService.listen('draw').subscribe((data) => this.drawFromServer(data));
+  }
 
   private loadBoardContent() {
     this.boardService.getBoardById(this.boardId).subscribe({
       next: (board) => {
         if (board.content) {
-          this.strokes = board.content;
-          this.redrawAll();
+          try {
+            this.strokes = JSON.parse(board.content);
+            this.redrawAll();
+          } catch {
+            console.error('Invalid board content format');
+          }
         }
       },
       error: (err) => console.error('Error loading board:', err),
@@ -48,7 +70,7 @@ export class WhiteboardComponent implements AfterViewInit {
   }
 
   private saveBoardContent() {
-    this.boardService.updateBoardContent(this.boardId, this.strokes).subscribe({
+    this.boardService.updateBoardContent(this.boardId, JSON.stringify(this.strokes)).subscribe({
       error: (err) => console.error('Error saving board content:', err),
     });
   }
@@ -64,20 +86,6 @@ export class WhiteboardComponent implements AfterViewInit {
     }
   }
 
-  ngAfterViewInit() {
-    const canvas = this.canvasRef.nativeElement;
-    this.ctx = canvas.getContext('2d')!;
-    this.boardId = Number(this.route.snapshot.paramMap.get('id'));
-
-    this.loadBoardContent();
-
-    // Live drawing from other users
-    this.socketService.listen('draw').subscribe((data) => this.drawFromServer(data));
-
-    // Auto-save every 5 seconds
-    this.saveInterval = setInterval(() => this.saveBoardContent(), 5000);
-  }
-
   private getCanvasCoords(event: MouseEvent) {
     const canvasEl = this.canvasRef.nativeElement;
     const rect = canvasEl.getBoundingClientRect();
@@ -91,49 +99,65 @@ export class WhiteboardComponent implements AfterViewInit {
   onMouseDown(event: MouseEvent) {
     const { x, y, inside } = this.getCanvasCoords(event);
     if (!inside) return;
+
     this.drawing = true;
+    this.lastX = x;
+    this.lastY = y;
 
     this.ctx.beginPath();
     this.ctx.moveTo(x, y);
-
-    // set current stroke style before emitting
     this.ctx.strokeStyle = this.currentColor;
     this.ctx.lineWidth = this.lineWidth;
 
-    // emit begin event
     this.socketService.emit('draw', {
       type: 'begin',
       x,
       y,
       color: this.currentColor,
-      lineWidth: this.lineWidth
+      lineWidth: this.lineWidth,
     });
   }
 
   @HostListener('mousemove', ['$event'])
   onMouseMove(event: MouseEvent) {
-    if (!this.drawing) return;
+    if (!this.drawing || this.lastX === null || this.lastY === null) return;
 
     const { x, y, inside } = this.getCanvasCoords(event);
     if (!inside) {
-      // If pointer left canvas while dragging, stop drawing to avoid stray lines
-      // (optional: you might want to set drawing=false only on mouseup or mouseleave)
       this.drawing = false;
+      this.lastX = this.lastY = null;
       return;
     }
 
-    // draw locally
+    // Draw locally
     this.ctx.lineTo(x, y);
     this.ctx.stroke();
 
-    // emit draw event for others
+    // Save stroke for persistence
+    this.strokes.push({
+      fromX: this.lastX,
+      fromY: this.lastY,
+      toX: x,
+      toY: y,
+      color: this.currentColor,
+      lineWidth: this.lineWidth,
+    });
+
+    // Update last position
+    this.lastX = x;
+    this.lastY = y;
+
+    // Emit for others
     this.socketService.emit('draw', {
       type: 'draw',
       x,
       y,
       color: this.currentColor,
-      lineWidth: this.lineWidth
+      lineWidth: this.lineWidth,
     });
+
+    // Debounced save trigger
+    this.saveSubject.next();
   }
 
   onMouseUp() {
@@ -152,7 +176,11 @@ export class WhiteboardComponent implements AfterViewInit {
   @HostListener('mouseup')
   @HostListener('mouseleave')
   stopDrawing() {
-    this.drawing = false;
+    if (this.drawing) {
+      this.drawing = false;
+      this.lastX = this.lastY = null;
+      this.saveSubject.next();
+  }
   }
 
   drawFromServer(data: any) {
@@ -173,6 +201,8 @@ export class WhiteboardComponent implements AfterViewInit {
   clearBoard() {
     this.clearLocal();
     this.socketService.emit('clear', {});
+    this.strokes = [];
+    this.saveBoardContent();
   }
 
   clearLocal() {
