@@ -32,6 +32,8 @@ export class BoardController {
   @Get(':id')
   findOne(@Param('id') id: string, @Req() req: AuthRequest) {
     const userId = req.user.userId;
+    console.log('Requesting user:', req.user.userId);
+    console.log('Board ID:', id);
     return this.boardService.findOneById(Number(id), userId);
   }
 

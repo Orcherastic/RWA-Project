@@ -47,10 +47,12 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.ctx = canvas.getContext('2d')!;
     this.boardId = Number(this.route.snapshot.paramMap.get('id'));
 
+    this.socketService.emit('joinBoard', this.boardId);
+
     this.loadBoardContent();
 
-    // Live drawing from other users
     this.socketService.listen('draw').subscribe((data) => this.drawFromServer(data));
+    this.socketService.listen('clear').subscribe(() => this.clearLocal());
   }
 
   private loadBoardContent() {
@@ -200,9 +202,9 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   clearBoard() {
     this.clearLocal();
-    this.socketService.emit('clear', {});
     this.strokes = [];
-    this.saveBoardContent();
+    this.saveSubject.next();
+    this.socketService.emit('clear', {});
   }
 
   clearLocal() {
