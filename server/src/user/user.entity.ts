@@ -7,6 +7,7 @@ import {
   OneToMany,
 } from 'typeorm';
 import { Board } from '../board/entities/board.entity';
+import { BoardMember } from 'src/board/entities/board-member.entity';
 
 @Entity()
 export class User {
@@ -30,4 +31,7 @@ export class User {
 
   @OneToMany(() => Board, (board) => board.owner)
   boards: Board[];
+
+  @OneToMany(() => BoardMember, (member) => member.user)
+  boardMemberships: BoardMember[];
 }

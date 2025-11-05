@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { BoardService } from './board.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AuthGuard } from '@nestjs/passport';
 
 interface AuthRequest extends Request {
   user: { userId: number; email: string };
@@ -32,8 +33,6 @@ export class BoardController {
   @Get(':id')
   findOne(@Param('id') id: string, @Req() req: AuthRequest) {
     const userId = req.user.userId;
-    console.log('Requesting user:', req.user.userId);
-    console.log('Board ID:', id);
     return this.boardService.findOneById(Number(id), userId);
   }
 
@@ -41,6 +40,17 @@ export class BoardController {
   async create(@Body('title') title: string, @Req() req: AuthRequest) {
     const userId = req.user.userId;
     return this.boardService.createBoard(title, userId);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Post(':id/share')
+  async shareBoard(
+    @Param('id') boardId: string,
+    @Body() body: { email: string },
+    @Req() req: AuthRequest,
+  ) {
+    const userId = req.user.userId;
+    return this.boardService.shareBoard(Number(boardId), body.email, userId);
   }
 
   @Patch(':id')

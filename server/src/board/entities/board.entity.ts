@@ -5,7 +5,9 @@ import {
   PrimaryGeneratedColumn,
   ManyToOne,
   CreateDateColumn,
+  OneToMany,
 } from 'typeorm';
+import { BoardMember } from './board-member.entity';
 
 @Entity()
 export class Board {
@@ -23,4 +25,7 @@ export class Board {
 
   @Column({ type: 'json', nullable: true })
   content: string;
+
+  @OneToMany(() => BoardMember, (member) => member.board, { cascade: true })
+  members: BoardMember[];
 }
