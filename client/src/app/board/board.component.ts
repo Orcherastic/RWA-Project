@@ -44,6 +44,16 @@ export class BoardComponent {
     this.router.navigate(['/boards', boardId]);
   }
 
+  promptShare(board: any) {
+    const email = prompt('Enter user email to share with');
+    if (!email) return;
+
+    this.boardService.shareBoard(board.id, email).subscribe({
+      next: () => alert('Board shared successfully'),
+      error: err => alert(err.error?.message || 'Share failed'),
+    });
+  }
+
   renameBoard(board: any, newTitle: string) {
     if (!newTitle.trim()) return;
     this.boardService.renameBoard(board.id, newTitle).subscribe({

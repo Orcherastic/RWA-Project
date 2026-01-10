@@ -14,13 +14,24 @@
   </button>
 </div>
 
-<canvas
-  #canvas
-  width="800"
-  height="600"
-  style="border: 1px solid black;"
-  (mousedown)="onMouseDown($event)"
-  (mousemove)="onMouseMove($event)"
-  (mouseup)="stopDrawing()"
-  (mouseleave)="stopDrawing()"
-></canvas>
+<div class="board-container" style="position: relative; display: inline-block;">
+  <!-- Drawing canvas -->
+  <canvas
+    #canvas
+    width="800"
+    height="600"
+    style="border: 1px solid black;"
+    (mousedown)="onMouseDown($event)"
+    (mousemove)="onMouseMove($event)"
+    (mouseup)="stopDrawing()"
+    (mouseleave)="stopDrawing()"
+  ></canvas>
+
+  <!-- Cursor canvas -->
+  <canvas
+    #cursorCanvas
+    width="800"
+    height="600"
+    style="position: absolute; top: 0; left: 0; pointer-events: none;"
+  ></canvas>
+</div>

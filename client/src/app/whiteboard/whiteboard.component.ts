@@ -4,7 +4,8 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { SocketService } from '../services/socket.service';
 import { BoardService } from '../services/board.service';
-import { debounceTime, Subject } from 'rxjs';
+import { debounceTime, fromEvent, Subject, throttleTime } from 'rxjs';
+import { CursorService } from '../services/cursor.service';
 
 @Component({
   selector: 'app-whiteboard',
@@ -14,11 +15,18 @@ import { debounceTime, Subject } from 'rxjs';
   styleUrls: ['./whiteboard.component.scss'],
 })
 export class WhiteboardComponent implements AfterViewInit, OnInit {
-  @ViewChild('canvas', { static: true }) canvasRef!: ElementRef<HTMLCanvasElement>;
+  @ViewChild('canvas', { static: true })
+  canvasRef!: ElementRef<HTMLCanvasElement>;
+
+  @ViewChild('cursorCanvas', { static: true })
+  cursorCanvasRef!: ElementRef<HTMLCanvasElement>;
+
+  private cursorCtx!: CanvasRenderingContext2D;
   private readonly saveSubject = new Subject<void>();
   private readonly subscriptions: any[] = [];
   private ctx!: CanvasRenderingContext2D;
   private drawing = false;
+  private boardLoaded = false;
   boardId!: number;
   private strokes: any[] = [];
 
@@ -31,7 +39,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   constructor(
     private readonly route: ActivatedRoute,
     private readonly socketService: SocketService,
-    private readonly boardService: BoardService
+    private readonly boardService: BoardService,
+    private readonly cursorService: CursorService
   ) {}
   
   ngOnInit() {
@@ -39,6 +48,18 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.loadBoardContent();
     this.subscriptions.push(
       this.saveSubject.pipe(debounceTime(1000)).subscribe(() => this.saveBoardContent())
+    );
+
+    this.subscriptions.push(
+      this.socketService.listen('cursor:update').subscribe(({ userId, x, y }) => {
+        this.cursorService.set(userId, x, y);
+      })
+    );
+
+    this.subscriptions.push(
+      this.socketService.listen('cursor:leave').subscribe(({ userId }) => {
+        this.cursorService.remove(userId);
+      })
     );
   }
 
@@ -49,15 +70,35 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
     this.socketService.emit('joinBoard', this.boardId);
 
-    this.loadBoardContent();
-
     this.socketService.listen('draw').subscribe((data) => this.drawFromServer(data));
     this.socketService.listen('clear').subscribe(() => this.clearLocal());
+
+    this.startCursorRenderLoop();
+
+    fromEvent<MouseEvent>(canvas, 'mousemove')
+    .pipe(throttleTime(33)) // ~30fps
+    .subscribe(event => {
+      if (!this.boardLoaded) return;
+      const { x, y, inside } = this.getCanvasCoords(event);
+      if (!inside) return;
+
+      this.socketService.emit('cursor:move', {
+        boardId: this.boardId,
+        x,
+        y,
+      });
+    });
+  }
+
+  ngOnDestroy() {
+    this.subscriptions.forEach(sub => sub.unsubscribe());
+    this.cursorService.clear();
   }
 
   private loadBoardContent() {
     this.boardService.getBoardById(this.boardId).subscribe({
       next: (board) => {
+        this.boardLoaded = true;
         if (board.content) {
           try {
             this.strokes = JSON.parse(board.content);
@@ -67,14 +108,22 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
           }
         }
       },
-      error: (err) => console.error('Error loading board:', err),
+      error: (err) => 
+        {
+          this.boardLoaded = false;
+          console.error('Error loading board:', err)
+        }
     });
   }
 
   private saveBoardContent() {
-    this.boardService.updateBoardContent(this.boardId, JSON.stringify(this.strokes)).subscribe({
-      error: (err) => console.error('Error saving board content:', err),
-    });
+    if (!this.boardLoaded) return;
+
+    this.boardService
+      .updateBoardContent(this.boardId, JSON.stringify(this.strokes))
+      .subscribe({
+        error: (err) => console.error('Error saving board content:', err),
+      });
   }
 
   private redrawAll() {
@@ -86,6 +135,28 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       this.ctx.lineTo(stroke.toX, stroke.toY);
       this.ctx.stroke();
     }
+  }
+
+  private startCursorRenderLoop() {
+    const render = () => {
+      this.cursorCtx.clearRect(
+        0,
+        0,
+        this.cursorCanvasRef.nativeElement.width,
+        this.cursorCanvasRef.nativeElement.height
+      );
+
+      this.cursorService.all().forEach(({ x, y }) => {
+        this.cursorCtx.beginPath();
+        this.cursorCtx.arc(x, y, 4, 0, Math.PI * 2);
+        this.cursorCtx.fillStyle = 'red';
+        this.cursorCtx.fill();
+      });
+
+      requestAnimationFrame(render);
+    };
+
+    render();
   }
 
   private getCanvasCoords(event: MouseEvent) {
@@ -159,7 +230,9 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     });
 
     // Debounced save trigger
-    this.saveSubject.next();
+    if (this.boardLoaded) {
+      this.saveSubject.next();
+    }
   }
 
   onMouseUp() {
@@ -181,8 +254,10 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     if (this.drawing) {
       this.drawing = false;
       this.lastX = this.lastY = null;
-      this.saveSubject.next();
-  }
+      if (this.boardLoaded) {
+        this.saveSubject.next();
+      }
+    }
   }
 
   drawFromServer(data: any) {
@@ -203,7 +278,9 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   clearBoard() {
     this.clearLocal();
     this.strokes = [];
-    this.saveSubject.next();
+    if (this.boardLoaded) {
+      this.saveSubject.next();
+    }
     this.socketService.emit('clear', {});
   }
 

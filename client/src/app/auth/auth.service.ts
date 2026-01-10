@@ -8,7 +8,7 @@ export class AuthService {
   saveUser(user: User) {
     localStorage.setItem('user', JSON.stringify(user));
   }
-  private readonly baseUrl = 'http://localhost:3000/auth';
+  private readonly baseUrl = 'http://localhost:3000/api/auth';
 
   constructor(private readonly http: HttpClient) {}
 

@@ -7,7 +7,7 @@ import { AuthService } from '../auth/auth.service';
   providedIn: 'root'
 })
 export class BoardService {
-  private readonly apiUrl = 'http://localhost:3000/boards';
+  private readonly apiUrl = 'http://localhost:3000/api/boards';
 
     constructor(
     private readonly http: HttpClient,
@@ -19,7 +19,7 @@ export class BoardService {
   }
 
   getBoardById(boardId: number) {
-    return this.http.get<any>(`http://localhost:3000/boards/${boardId}`);
+    return this.http.get<any>(`http://localhost:3000/api/boards/${boardId}`);
   }
 
   createBoard(title: string): Observable<any> {
@@ -32,8 +32,15 @@ export class BoardService {
     return this.http.post(this.apiUrl, { title, ownerId: userId });
   }
 
+  shareBoard(boardId: number, email: string) {
+    return this.http.post(
+      `/api/boards/${boardId}/share`,
+      { email }
+    );
+  }
+
   updateBoardContent(boardId: number, content: string) {
-    return this.http.put(`http://localhost:3000/boards/${boardId}/content`, { content });
+    return this.http.put(`http://localhost:3000/api/boards/${boardId}/content`, { content });
   }
 
   renameBoard(id: number, newTitle: string): Observable<any> {
