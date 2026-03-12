@@ -111,11 +111,21 @@ export class BoardService {
 
     if (!isOwner && !isMember) {
       throw new ForbiddenException('You do not have access to this board');
+    }
+
+    board.content = content;
+    return this.boardRepo.save(board);
   }
 
-  board.content = content;
-  return this.boardRepo.save(board);
-}
+  async saveContent(boardId: number, content: string) {
+    const board = await this.boardRepo.findOne({
+      where: { id: boardId },
+    });
+    if (!board) throw new NotFoundException('Board not found');
+
+    board.content = content;
+    return this.boardRepo.save(board);
+  }
 
   async deleteBoard(boardId: number, userId: number): Promise<void> {
     const board = await this.boardRepo.findOne({

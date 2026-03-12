@@ -1,5 +1,6 @@
 .board-container {
   position: relative;
+  cursor: none;
 }
 
 .draw-canvas {
@@ -11,4 +12,27 @@
   top: 0;
   left: 0;
   pointer-events: none;
+}
+
+canvas {
+  cursor: crosshair;
+}
+
+.tool-group {
+  display: flex;
+  gap: 6px;
+}
+
+.tool-button {
+  padding: 4px 10px;
+  border: 1px solid #888;
+  background: #f6f6f6;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tool-button.active {
+  background: #2b2b2b;
+  color: #fff;
+  border-color: #2b2b2b;
 }

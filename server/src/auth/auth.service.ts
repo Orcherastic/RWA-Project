@@ -39,10 +39,8 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
 
     const payload = { username: user.email, sub: user.id };
-    return {
-      access_token: this.jwtService.sign(payload),
-      user,
-    };
+    const access_token = this.jwtService.sign(payload);
+    return { access_token, user };
   }
 
   async register(dto: CreateUserDto) {
@@ -54,9 +52,7 @@ export class AuthService {
 
     const payload = { username: user.email, sub: user.id };
 
-    return {
-      access_token: this.jwtService.sign(payload),
-      user,
-    };
+    const access_token = this.jwtService.sign(payload);
+    return { access_token, user };
   }
 }

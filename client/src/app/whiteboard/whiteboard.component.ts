@@ -3,8 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { SocketService } from '../services/socket.service';
-import { BoardService } from '../services/board.service';
-import { debounceTime, fromEvent, Subject, throttleTime } from 'rxjs';
+import { fromEvent, throttleTime } from 'rxjs';
 import { CursorService } from '../services/cursor.service';
 
 @Component({
@@ -22,7 +21,6 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   cursorCanvasRef!: ElementRef<HTMLCanvasElement>;
 
   private cursorCtx!: CanvasRenderingContext2D;
-  private readonly saveSubject = new Subject<void>();
   private readonly subscriptions: any[] = [];
   private ctx!: CanvasRenderingContext2D;
   private drawing = false;
@@ -32,6 +30,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   currentColor = '#000000';
   lineWidth = 2;
+  currentTool: 'brush' | 'eraser' = 'brush';
 
   private lastX: number | null = null;
   private lastY: number | null = null;
@@ -39,15 +38,17 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   constructor(
     private readonly route: ActivatedRoute,
     private readonly socketService: SocketService,
-    private readonly boardService: BoardService,
     private readonly cursorService: CursorService
   ) {}
   
   ngOnInit() {
     this.boardId = Number(this.route.snapshot.paramMap.get('id'));
-    this.loadBoardContent();
     this.subscriptions.push(
-      this.saveSubject.pipe(debounceTime(1000)).subscribe(() => this.saveBoardContent())
+      this.socketService.listen('board:state').subscribe(({ strokes }) => {
+        this.strokes = Array.isArray(strokes) ? strokes : [];
+        this.boardLoaded = true;
+        this.redrawAll();
+      })
     );
 
     this.subscriptions.push(
@@ -60,8 +61,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       this.socketService.listen('cursor:leave').subscribe(({ userId }) => {
         this.cursorService.remove(userId);
       })
-    );
-  }
+    )}
 
   ngAfterViewInit() {
     const canvas = this.canvasRef.nativeElement;
@@ -71,8 +71,13 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.socketService.emit('joinBoard', this.boardId);
 
     this.socketService.listen('draw').subscribe((data) => this.drawFromServer(data));
-    this.socketService.listen('clear').subscribe(() => this.clearLocal());
+    this.socketService.listen('clear').subscribe(() => {
+      this.clearLocal();
+      this.strokes = [];
+    });
 
+    const cursor = this.cursorCanvasRef.nativeElement;
+    this.cursorCtx = cursor.getContext('2d')!;
     this.startCursorRenderLoop();
 
     fromEvent<MouseEvent>(canvas, 'mousemove')
@@ -88,52 +93,32 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         y,
       });
     });
+
+    fromEvent<MouseEvent>(canvas, 'mouseleave').subscribe(() => {
+      this.socketService.emit('cursor:leave', {
+        boardId: this.boardId,
+      });
+    });
   }
 
   ngOnDestroy() {
     this.subscriptions.forEach(sub => sub.unsubscribe());
+    this.socketService.emit('cursor:leave', {
+      boardId: this.boardId,
+    });
     this.cursorService.clear();
   }
 
-  private loadBoardContent() {
-    this.boardService.getBoardById(this.boardId).subscribe({
-      next: (board) => {
-        this.boardLoaded = true;
-        if (board.content) {
-          try {
-            this.strokes = JSON.parse(board.content);
-            this.redrawAll();
-          } catch {
-            console.error('Invalid board content format');
-          }
-        }
-      },
-      error: (err) => 
-        {
-          this.boardLoaded = false;
-          console.error('Error loading board:', err)
-        }
-    });
-  }
-
-  private saveBoardContent() {
-    if (!this.boardLoaded) return;
-
-    this.boardService
-      .updateBoardContent(this.boardId, JSON.stringify(this.strokes))
-      .subscribe({
-        error: (err) => console.error('Error saving board content:', err),
-      });
-  }
-
   private redrawAll() {
+    const canvas = this.canvasRef.nativeElement;
+    this.ctx.clearRect(0, 0, canvas.width, canvas.height);
     for (const stroke of this.strokes) {
-      this.ctx.strokeStyle = stroke.color;
-      this.ctx.lineWidth = stroke.lineWidth;
+      this.applyStrokeStyle(stroke);
       this.ctx.beginPath();
       this.ctx.moveTo(stroke.fromX, stroke.fromY);
       this.ctx.lineTo(stroke.toX, stroke.toY);
       this.ctx.stroke();
+      this.resetComposite();
     }
   }
 
@@ -170,6 +155,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   @HostListener('mousedown', ['$event'])
   onMouseDown(event: MouseEvent) {
+    if (!this.boardLoaded) return;
     const { x, y, inside } = this.getCanvasCoords(event);
     if (!inside) return;
 
@@ -177,18 +163,13 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.lastX = x;
     this.lastY = y;
 
-    this.ctx.beginPath();
-    this.ctx.moveTo(x, y);
-    this.ctx.strokeStyle = this.currentColor;
-    this.ctx.lineWidth = this.lineWidth;
-
-    this.socketService.emit('draw', {
-      type: 'begin',
-      x,
-      y,
+    this.applyStrokeStyle({
       color: this.currentColor,
       lineWidth: this.lineWidth,
+      tool: this.currentTool,
     });
+    this.ctx.beginPath();
+    this.ctx.moveTo(x, y);
   }
 
   @HostListener('mousemove', ['$event'])
@@ -202,18 +183,28 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       return;
     }
 
+    const fromX = this.lastX;
+    const fromY = this.lastY;
+
     // Draw locally
+    this.applyStrokeStyle({
+      color: this.currentColor,
+      lineWidth: this.lineWidth,
+      tool: this.currentTool,
+    });
     this.ctx.lineTo(x, y);
     this.ctx.stroke();
+    this.resetComposite();
 
     // Save stroke for persistence
     this.strokes.push({
-      fromX: this.lastX,
-      fromY: this.lastY,
+      fromX,
+      fromY,
       toX: x,
       toY: y,
       color: this.currentColor,
       lineWidth: this.lineWidth,
+      tool: this.currentTool,
     });
 
     // Update last position
@@ -222,17 +213,17 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
     // Emit for others
     this.socketService.emit('draw', {
-      type: 'draw',
-      x,
-      y,
+      type: 'stroke',
+      fromX,
+      fromY,
+      toX: x,
+      toY: y,
       color: this.currentColor,
       lineWidth: this.lineWidth,
+      tool: this.currentTool,
     });
 
     // Debounced save trigger
-    if (this.boardLoaded) {
-      this.saveSubject.next();
-    }
   }
 
   onMouseUp() {
@@ -254,38 +245,63 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     if (this.drawing) {
       this.drawing = false;
       this.lastX = this.lastY = null;
-      if (this.boardLoaded) {
-        this.saveSubject.next();
-      }
     }
   }
 
   drawFromServer(data: any) {
     if (!this.ctx) return;
-    // ensure styling is applied from the remote data
-    if (data.color) this.ctx.strokeStyle = data.color;
-    if (data.lineWidth) this.ctx.lineWidth = data.lineWidth;
 
-    if (data.type === 'begin') {
+    if (data.type === 'stroke') {
+      this.applyStrokeStyle(data);
       this.ctx.beginPath();
-      this.ctx.moveTo(data.x, data.y);
-    } else if (data.type === 'draw') {
-      this.ctx.lineTo(data.x, data.y);
+      this.ctx.moveTo(data.fromX, data.fromY);
+      this.ctx.lineTo(data.toX, data.toY);
       this.ctx.stroke();
+      this.resetComposite();
+
+      // STORE REMOTE STROKE
+      this.strokes.push({
+        fromX: data.fromX,
+        fromY: data.fromY,
+        toX: data.toX,
+        toY: data.toY,
+        color: data.color,
+        lineWidth: data.lineWidth,
+        tool: data.tool,
+      });
     }
   }
 
   clearBoard() {
     this.clearLocal();
     this.strokes = [];
-    if (this.boardLoaded) {
-      this.saveSubject.next();
-    }
     this.socketService.emit('clear', {});
   }
 
   clearLocal() {
     const canvas = this.canvasRef.nativeElement;
     this.ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  setTool(tool: 'brush' | 'eraser') {
+    this.currentTool = tool;
+  }
+
+  private applyStrokeStyle(stroke: { color?: string; lineWidth?: number; tool?: string }) {
+    const tool = stroke.tool ?? 'brush';
+    if (tool === 'eraser') {
+      this.ctx.globalCompositeOperation = 'destination-out';
+      this.ctx.strokeStyle = 'rgba(0,0,0,1)';
+    } else {
+      this.ctx.globalCompositeOperation = 'source-over';
+      this.ctx.strokeStyle = stroke.color ?? this.currentColor;
+    }
+    this.ctx.lineWidth = stroke.lineWidth ?? this.lineWidth;
+    this.ctx.lineCap = 'round';
+    this.ctx.lineJoin = 'round';
+  }
+
+  private resetComposite() {
+    this.ctx.globalCompositeOperation = 'source-over';
   }
 }

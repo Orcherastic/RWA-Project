@@ -1,4 +1,22 @@
 <div class="toolbar" style="margin-bottom: 10px; display: flex; gap: 10px; align-items: center;">
+  <div class="tool-group">
+    <button
+      type="button"
+      class="tool-button"
+      [class.active]="currentTool === 'brush'"
+      (click)="setTool('brush')"
+    >
+      Brush
+    </button>
+    <button
+      type="button"
+      class="tool-button"
+      [class.active]="currentTool === 'eraser'"
+      (click)="setTool('eraser')"
+    >
+      Eraser
+    </button>
+  </div>
   <label>
     Color:
     <input type="color" [(ngModel)]="currentColor" />
