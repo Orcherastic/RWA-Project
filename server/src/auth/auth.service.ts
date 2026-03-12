@@ -38,7 +38,12 @@ export class AuthService {
     if (!isPasswordValid)
       throw new UnauthorizedException('Invalid credentials');
 
-    const payload = { username: user.email, sub: user.id };
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      username: user.email,
+      displayName: user.displayName ?? user.email,
+    };
     const access_token = this.jwtService.sign(payload);
     return { access_token, user };
   }
@@ -50,7 +55,12 @@ export class AuthService {
       password: hashed,
     });
 
-    const payload = { username: user.email, sub: user.id };
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      username: user.email,
+      displayName: user.displayName ?? user.email,
+    };
 
     const access_token = this.jwtService.sign(payload);
     return { access_token, user };

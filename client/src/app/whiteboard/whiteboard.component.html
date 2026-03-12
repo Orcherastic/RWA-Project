@@ -17,6 +17,14 @@
       Eraser
     </button>
   </div>
+  <div class="tool-group">
+    <button type="button" class="tool-button" (click)="undo()" [disabled]="!undoStack.length">
+      Undo
+    </button>
+    <button type="button" class="tool-button" (click)="redo()" [disabled]="!redoStack.length">
+      Redo
+    </button>
+  </div>
   <label>
     Color:
     <input type="color" [(ngModel)]="currentColor" />

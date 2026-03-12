@@ -5,6 +5,7 @@ import { ActivatedRoute } from '@angular/router';
 import { SocketService } from '../services/socket.service';
 import { fromEvent, throttleTime } from 'rxjs';
 import { CursorService } from '../services/cursor.service';
+import { AuthService } from '../auth/auth.service';
 
 @Component({
   selector: 'app-whiteboard',
@@ -26,7 +27,11 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   private drawing = false;
   private boardLoaded = false;
   boardId!: number;
-  private strokes: any[] = [];
+  private strokes: Stroke[] = [];
+  undoStack: Stroke[][] = [];
+  redoStack: Stroke[][] = [];
+  private userId: number | null = null;
+  private strokeSeq = 0;
 
   currentColor = '#000000';
   lineWidth = 2;
@@ -34,27 +39,47 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   private lastX: number | null = null;
   private lastY: number | null = null;
+  private lastCursorX: number | null = null;
+  private lastCursorY: number | null = null;
+  private activeStrokeId: string | null = null;
+  private activeStrokeBuffer: Stroke[] = [];
 
   constructor(
     private readonly route: ActivatedRoute,
     private readonly socketService: SocketService,
-    private readonly cursorService: CursorService
+    private readonly cursorService: CursorService,
+    private readonly authService: AuthService
   ) {}
   
   ngOnInit() {
     this.boardId = Number(this.route.snapshot.paramMap.get('id'));
+    this.userId = this.authService.getUserId();
     this.subscriptions.push(
       this.socketService.listen('board:state').subscribe(({ strokes }) => {
-        this.strokes = Array.isArray(strokes) ? strokes : [];
+        this.strokes = Array.isArray(strokes)
+          ? strokes.map((s, idx) => this.normalizeStroke(s, idx))
+          : [];
+        this.undoStack = [];
+        this.redoStack = [];
         this.boardLoaded = true;
         this.redrawAll();
       })
     );
 
     this.subscriptions.push(
-      this.socketService.listen('cursor:update').subscribe(({ userId, x, y }) => {
-        this.cursorService.set(userId, x, y);
-      })
+      this.socketService
+        .listen('cursor:update')
+        .subscribe(({ userId, x, y, displayName, color, tool }) => {
+          if (!userId) return;
+          this.cursorService.set(
+            userId,
+            x,
+            y,
+            displayName ?? `User ${userId}`,
+            color ?? '#e53935',
+            (tool ?? 'brush') as 'brush' | 'eraser',
+          );
+        })
     );
 
     this.subscriptions.push(
@@ -71,9 +96,19 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.socketService.emit('joinBoard', this.boardId);
 
     this.socketService.listen('draw').subscribe((data) => this.drawFromServer(data));
+    this.socketService.listen('undo').subscribe(({ strokeId }) => {
+      if (!strokeId) return;
+      const before = this.strokes.length;
+      this.strokes = this.strokes.filter((s) => s.strokeId !== strokeId);
+      if (this.strokes.length !== before) {
+        this.redrawAll();
+      }
+    });
     this.socketService.listen('clear').subscribe(() => {
       this.clearLocal();
       this.strokes = [];
+      this.undoStack = [];
+      this.redoStack = [];
     });
 
     const cursor = this.cursorCanvasRef.nativeElement;
@@ -86,15 +121,20 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       if (!this.boardLoaded) return;
       const { x, y, inside } = this.getCanvasCoords(event);
       if (!inside) return;
+      this.lastCursorX = x;
+      this.lastCursorY = y;
 
       this.socketService.emit('cursor:move', {
         boardId: this.boardId,
         x,
         y,
+        tool: this.currentTool,
       });
     });
 
     fromEvent<MouseEvent>(canvas, 'mouseleave').subscribe(() => {
+      this.lastCursorX = null;
+      this.lastCursorY = null;
       this.socketService.emit('cursor:leave', {
         boardId: this.boardId,
       });
@@ -131,11 +171,16 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         this.cursorCanvasRef.nativeElement.height
       );
 
-      this.cursorService.all().forEach(({ x, y }) => {
+      this.cursorService.all().forEach(({ x, y, color, displayName, tool }) => {
         this.cursorCtx.beginPath();
         this.cursorCtx.arc(x, y, 4, 0, Math.PI * 2);
-        this.cursorCtx.fillStyle = 'red';
+        this.cursorCtx.fillStyle = color;
         this.cursorCtx.fill();
+
+        const label = `${displayName} [${tool === 'eraser' ? 'E' : 'B'}]`;
+        this.cursorCtx.font = '12px Arial';
+        this.cursorCtx.fillStyle = color;
+        this.cursorCtx.fillText(label, x + 8, y - 8);
       });
 
       requestAnimationFrame(render);
@@ -162,6 +207,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.drawing = true;
     this.lastX = x;
     this.lastY = y;
+    this.activeStrokeId = this.createStrokeId();
+    this.activeStrokeBuffer = [];
 
     this.applyStrokeStyle({
       color: this.currentColor,
@@ -180,11 +227,19 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     if (!inside) {
       this.drawing = false;
       this.lastX = this.lastY = null;
+      if (this.activeStrokeBuffer.length > 0) {
+        this.undoStack.push(this.activeStrokeBuffer);
+        this.activeStrokeBuffer = [];
+        this.activeStrokeId = null;
+      }
       return;
     }
 
     const fromX = this.lastX;
     const fromY = this.lastY;
+    const strokeId = this.activeStrokeId ?? this.createStrokeId();
+    const segmentId = this.createSegmentId(strokeId);
+    const strokeUserId = this.userId ?? -1;
 
     // Draw locally
     this.applyStrokeStyle({
@@ -197,7 +252,10 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.resetComposite();
 
     // Save stroke for persistence
-    this.strokes.push({
+    const stroke: Stroke = {
+      id: segmentId,
+      strokeId,
+      userId: strokeUserId,
       fromX,
       fromY,
       toX: x,
@@ -205,7 +263,12 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       color: this.currentColor,
       lineWidth: this.lineWidth,
       tool: this.currentTool,
-    });
+    };
+    this.strokes.push(stroke);
+    if (this.userId !== null) {
+      this.activeStrokeBuffer.push(stroke);
+      this.redoStack = [];
+    }
 
     // Update last position
     this.lastX = x;
@@ -214,6 +277,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     // Emit for others
     this.socketService.emit('draw', {
       type: 'stroke',
+      id: segmentId,
+      strokeId,
       fromX,
       fromY,
       toX: x,
@@ -245,6 +310,42 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     if (this.drawing) {
       this.drawing = false;
       this.lastX = this.lastY = null;
+      if (this.activeStrokeBuffer.length > 0) {
+        this.undoStack.push(this.activeStrokeBuffer);
+        this.activeStrokeBuffer = [];
+        this.activeStrokeId = null;
+      }
+    }
+  }
+
+  @HostListener('window:keydown', ['$event'])
+  onKeyDown(event: KeyboardEvent) {
+    if (event.defaultPrevented) return;
+
+    const key = event.key.toLowerCase();
+    const ctrlOrMeta = event.ctrlKey || event.metaKey;
+
+    if (ctrlOrMeta && key === 'z' && !event.shiftKey) {
+      event.preventDefault();
+      this.undo();
+      return;
+    }
+
+    if (ctrlOrMeta && (key === 'y' || (key === 'z' && event.shiftKey))) {
+      event.preventDefault();
+      this.redo();
+      return;
+    }
+
+    if (key === 'b') {
+      event.preventDefault();
+      this.setTool('brush');
+      return;
+    }
+
+    if (key === 'e') {
+      event.preventDefault();
+      this.setTool('eraser');
     }
   }
 
@@ -260,21 +361,15 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       this.resetComposite();
 
       // STORE REMOTE STROKE
-      this.strokes.push({
-        fromX: data.fromX,
-        fromY: data.fromY,
-        toX: data.toX,
-        toY: data.toY,
-        color: data.color,
-        lineWidth: data.lineWidth,
-        tool: data.tool,
-      });
+      this.strokes.push(this.normalizeStroke(data, this.strokes.length));
     }
   }
 
   clearBoard() {
     this.clearLocal();
     this.strokes = [];
+    this.undoStack = [];
+    this.redoStack = [];
     this.socketService.emit('clear', {});
   }
 
@@ -285,6 +380,36 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   setTool(tool: 'brush' | 'eraser') {
     this.currentTool = tool;
+    if (this.lastCursorX !== null && this.lastCursorY !== null) {
+      this.socketService.emit('cursor:move', {
+        boardId: this.boardId,
+        x: this.lastCursorX,
+        y: this.lastCursorY,
+        tool: this.currentTool,
+      });
+    }
+  }
+
+  undo() {
+    if (!this.userId || this.undoStack.length === 0) return;
+    const group = this.undoStack.pop()!;
+    this.redoStack.push(group);
+    const strokeId = group[0]?.strokeId;
+    if (!strokeId) return;
+    this.strokes = this.strokes.filter((s) => s.strokeId !== strokeId);
+    this.redrawAll();
+    this.socketService.emit('undo', { boardId: this.boardId, strokeId });
+  }
+
+  redo() {
+    if (!this.userId || this.redoStack.length === 0) return;
+    const group = this.redoStack.pop()!;
+    this.undoStack.push(group);
+    this.strokes.push(...group);
+    this.redrawAll();
+    const strokeId = group[0]?.strokeId;
+    if (!strokeId) return;
+    this.socketService.emit('redo', { boardId: this.boardId, strokeId, strokes: group });
   }
 
   private applyStrokeStyle(stroke: { color?: string; lineWidth?: number; tool?: string }) {
@@ -304,4 +429,45 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   private resetComposite() {
     this.ctx.globalCompositeOperation = 'source-over';
   }
+
+  private createStrokeId() {
+    const uid = this.userId ?? 0;
+    this.strokeSeq += 1;
+    return `${uid}-${Date.now()}-${this.strokeSeq}`;
+  }
+
+  private createSegmentId(strokeId: string) {
+    this.strokeSeq += 1;
+    return `${strokeId}-${this.strokeSeq}`;
+  }
+
+  private normalizeStroke(data: any, index: number): Stroke {
+    const id = typeof data?.id === 'string' ? data.id : `legacy-${index}-${Date.now()}`;
+    const strokeId = typeof data?.strokeId === 'string' ? data.strokeId : id;
+    return {
+      id,
+      strokeId,
+      userId: typeof data?.userId === 'number' ? data.userId : -1,
+      fromX: data.fromX,
+      fromY: data.fromY,
+      toX: data.toX,
+      toY: data.toY,
+      color: data.color ?? '#000000',
+      lineWidth: data.lineWidth ?? 2,
+      tool: (data.tool ?? 'brush') as 'brush' | 'eraser',
+    };
+  }
+}
+
+interface Stroke {
+  id: string;
+  strokeId: string;
+  userId: number;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  color: string;
+  lineWidth: number;
+  tool: 'brush' | 'eraser';
 }
