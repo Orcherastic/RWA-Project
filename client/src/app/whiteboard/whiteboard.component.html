@@ -18,6 +18,32 @@
     </button>
   </div>
   <div class="tool-group">
+    <button
+      type="button"
+      class="tool-button"
+      [class.active]="currentTool === 'line'"
+      (click)="setTool('line')"
+    >
+      Line
+    </button>
+    <button
+      type="button"
+      class="tool-button"
+      [class.active]="currentTool === 'rect'"
+      (click)="setTool('rect')"
+    >
+      Rect
+    </button>
+    <button
+      type="button"
+      class="tool-button"
+      [class.active]="currentTool === 'circle'"
+      (click)="setTool('circle')"
+    >
+      Circle
+    </button>
+  </div>
+  <div class="tool-group">
     <button type="button" class="tool-button" (click)="undo()" [disabled]="!undoStack.length">
       Undo
     </button>
@@ -30,9 +56,22 @@
     <input type="color" [(ngModel)]="currentColor" />
   </label>
 
-  <label>
+  <label class="line-width">
     Line width:
-    <input type="number" [(ngModel)]="lineWidth" min="1" max="20" />
+    <input
+      type="range"
+      [ngModel]="lineWidth"
+      (ngModelChange)="lineWidth = +$event"
+      min="1"
+      max="40"
+    />
+    <span class="width-value">{{ lineWidth }}</span>
+    <span
+      class="brush-preview"
+      [style.width.px]="lineWidth * 2"
+      [style.height.px]="lineWidth * 2"
+      [style.background]="currentColor"
+    ></span>
   </label>
 
   <button (click)="clearBoard()">

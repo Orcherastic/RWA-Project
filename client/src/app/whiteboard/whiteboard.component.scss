@@ -36,3 +36,21 @@ canvas {
   color: #fff;
   border-color: #2b2b2b;
 }
+
+.line-width {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.width-value {
+  min-width: 24px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.brush-preview {
+  display: inline-block;
+  border-radius: 50%;
+  border: 1px solid #444;
+}

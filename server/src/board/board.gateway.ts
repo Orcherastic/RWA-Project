@@ -23,6 +23,9 @@ export class BoardGateway {
   private readonly boardRooms = new Map<string, number>();
   private readonly boardStates = new Map<number, any[]>();
   private readonly saveTimers = new Map<number, NodeJS.Timeout>();
+  private readonly boardVersions = new Map<number, number>();
+  private readonly maxSegments = 5000;
+  private readonly compactTo = 4000;
 
   constructor(private readonly boardService: BoardService) {}
 
@@ -87,8 +90,21 @@ export class BoardGateway {
         userId: user.id,
       });
 
-      client.leave(`board-${boardId}`);
+      const room = `board-${boardId}`;
+      client.leave(room);
       this.boardRooms.delete(client.id);
+
+      const roomSize = this.server.sockets.adapter.rooms.get(room)?.size ?? 0;
+      if (roomSize === 0) {
+        // no active clients: free memory (state is already persisted)
+        this.boardStates.delete(boardId);
+        this.boardVersions.delete(boardId);
+        const timer = this.saveTimers.get(boardId);
+        if (timer) {
+          clearTimeout(timer);
+          this.saveTimers.delete(boardId);
+        }
+      }
     }
 
     console.log('Client disconnected:', client.id);
@@ -129,23 +145,50 @@ export class BoardGateway {
           strokes = [];
         }
       }
-      const normalized = strokes.map((s: any, idx: number) => ({
-        id: typeof s?.id === 'string' ? s.id : `legacy-${boardId}-${idx}`,
-        strokeId: typeof s?.strokeId === 'string' ? s.strokeId : (typeof s?.id === 'string' ? s.id : `legacy-${boardId}-${idx}`),
-        userId: typeof s?.userId === 'number' ? s.userId : -1,
-        fromX: s.fromX,
-        fromY: s.fromY,
-        toX: s.toX,
-        toY: s.toY,
-        color: s.color,
-        lineWidth: s.lineWidth,
-        tool: s.tool ?? 'brush',
-      }));
+      const normalized = strokes.map((s: any, idx: number) => {
+        const id = typeof s?.id === 'string' ? s.id : `legacy-${boardId}-${idx}`;
+        const strokeId =
+          typeof s?.strokeId === 'string'
+            ? s.strokeId
+            : (typeof s?.id === 'string' ? s.id : `legacy-${boardId}-${idx}`);
+        const type = s?.type === 'shape' ? 'shape' : 'stroke';
+        if (type === 'shape') {
+          return {
+            id,
+            strokeId,
+            type: 'shape',
+            shapeType: s.shapeType ?? 'line',
+            userId: typeof s?.userId === 'number' ? s.userId : -1,
+            x1: s.x1,
+            y1: s.y1,
+            x2: s.x2,
+            y2: s.y2,
+            color: s.color,
+            lineWidth: s.lineWidth,
+            tool: 'brush',
+          };
+        }
+        return {
+          id,
+          strokeId,
+          type: 'stroke',
+          userId: typeof s?.userId === 'number' ? s.userId : -1,
+          fromX: s.fromX,
+          fromY: s.fromY,
+          toX: s.toX,
+          toY: s.toY,
+          color: s.color,
+          lineWidth: s.lineWidth,
+          tool: s.tool ?? 'brush',
+        };
+      });
       this.boardStates.set(boardId, normalized);
+      this.boardVersions.set(boardId, 0);
     }
 
     client.emit('board:state', {
       strokes: this.boardStates.get(boardId) ?? [],
+      version: this.boardVersions.get(boardId) ?? 0,
     });
   }
 
@@ -155,30 +198,51 @@ export class BoardGateway {
     const boardId = this.boardRooms.get(client.id);
     if (!boardId) return;
 
-    if (data?.type === 'stroke') {
+    if (data?.type === 'stroke' || data?.type === 'shape') {
       const user = client.data.user;
       if (!user) return;
       const strokeId = data.strokeId ?? data.id ?? `${user.id}-${Date.now()}`;
       const segmentId = data.id ?? `${strokeId}-${Date.now()}`;
       const strokes = this.boardStates.get(boardId) ?? [];
-      strokes.push({
-        id: segmentId,
-        strokeId,
-        userId: user.id,
-        fromX: data.fromX,
-        fromY: data.fromY,
-        toX: data.toX,
-        toY: data.toY,
-        color: data.color,
-        lineWidth: data.lineWidth,
-        tool: data.tool,
-      });
+      if (data.type === 'shape') {
+        strokes.push({
+          id: segmentId,
+          strokeId,
+          type: 'shape',
+          shapeType: data.shapeType ?? 'line',
+          userId: user.id,
+          x1: data.x1,
+          y1: data.y1,
+          x2: data.x2,
+          y2: data.y2,
+          color: data.color,
+          lineWidth: data.lineWidth,
+          tool: 'brush',
+        });
+      } else {
+        strokes.push({
+          id: segmentId,
+          strokeId,
+          type: 'stroke',
+          userId: user.id,
+          fromX: data.fromX,
+          fromY: data.fromY,
+          toX: data.toX,
+          toY: data.toY,
+          color: data.color,
+          lineWidth: data.lineWidth,
+          tool: data.tool,
+        });
+      }
       this.boardStates.set(boardId, strokes);
+      const version = this.bumpVersion(boardId);
       this.scheduleSave(boardId);
+      this.maybeCompact(boardId);
 
       data.id = segmentId;
       data.strokeId = strokeId;
       data.userId = user.id;
+      data.version = version;
     }
 
     // Broadcast to everyone else in the board
@@ -226,8 +290,9 @@ export class BoardGateway {
     }
 
     if (!removedId) return;
+    const version = this.bumpVersion(boardId);
     this.scheduleSave(boardId);
-    client.to(`board-${boardId}`).emit('undo', { strokeId: removedId });
+    client.to(`board-${boardId}`).emit('undo', { strokeId: removedId, version });
   }
 
   // REDO
@@ -249,28 +314,50 @@ export class BoardGateway {
     const broadcast: any[] = [];
     for (const seg of incoming) {
       const segmentId = seg.id ?? `${strokeId}-${Date.now()}`;
-      const entry = {
-        id: segmentId,
-        strokeId,
-        userId: user.id,
-        fromX: seg.fromX,
-        fromY: seg.fromY,
-        toX: seg.toX,
-        toY: seg.toY,
-        color: seg.color,
-        lineWidth: seg.lineWidth,
-        tool: seg.tool,
-      };
-      strokes.push(entry);
-      broadcast.push(entry);
+      if (seg.type === 'shape') {
+        const entry = {
+          id: segmentId,
+          strokeId,
+          type: 'shape',
+          shapeType: seg.shapeType ?? 'line',
+          userId: user.id,
+          x1: seg.x1,
+          y1: seg.y1,
+          x2: seg.x2,
+          y2: seg.y2,
+          color: seg.color,
+          lineWidth: seg.lineWidth,
+          tool: 'brush',
+        };
+        strokes.push(entry);
+        broadcast.push(entry);
+      } else {
+        const entry = {
+          id: segmentId,
+          strokeId,
+          type: 'stroke',
+          userId: user.id,
+          fromX: seg.fromX,
+          fromY: seg.fromY,
+          toX: seg.toX,
+          toY: seg.toY,
+          color: seg.color,
+          lineWidth: seg.lineWidth,
+          tool: seg.tool,
+        };
+        strokes.push(entry);
+        broadcast.push(entry);
+      }
     }
     this.boardStates.set(boardId, strokes);
+    const version = this.bumpVersion(boardId);
     this.scheduleSave(boardId);
+    this.maybeCompact(boardId);
 
     for (const seg of broadcast) {
       client.to(`board-${boardId}`).emit('draw', {
-        type: 'stroke',
         ...seg,
+        version,
       });
     }
   }
@@ -329,8 +416,23 @@ export class BoardGateway {
     if (!boardId) return;
 
     this.boardStates.set(boardId, []);
+    const version = this.bumpVersion(boardId);
     this.scheduleSave(boardId);
-    client.to(`board-${boardId}`).emit('clear');
+    client.to(`board-${boardId}`).emit('clear', { version });
+  }
+
+  // RESYNC
+  @SubscribeMessage('board:resync')
+  handleResync(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { boardId?: number },
+  ) {
+    const boardId = data?.boardId ?? this.boardRooms.get(client.id);
+    if (!boardId) return;
+    client.emit('board:state', {
+      strokes: this.boardStates.get(boardId) ?? [],
+      version: this.boardVersions.get(boardId) ?? 0,
+    });
   }
 
   private scheduleSave(boardId: number) {
@@ -350,5 +452,27 @@ export class BoardGateway {
     }, 1000);
 
     this.saveTimers.set(boardId, timer);
+  }
+
+  private bumpVersion(boardId: number) {
+    const next = (this.boardVersions.get(boardId) ?? 0) + 1;
+    this.boardVersions.set(boardId, next);
+    return next;
+  }
+
+  private maybeCompact(boardId: number) {
+    const strokes = this.boardStates.get(boardId);
+    if (!strokes || strokes.length <= this.maxSegments) return;
+
+    const compacted = strokes.slice(-this.compactTo);
+    this.boardStates.set(boardId, compacted);
+    const version = this.bumpVersion(boardId);
+    this.scheduleSave(boardId);
+
+    // Force clients to resync to the compacted state
+    this.server.to(`board-${boardId}`).emit('board:state', {
+      strokes: compacted,
+      version,
+    });
   }
 }

@@ -27,22 +27,27 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   private drawing = false;
   private boardLoaded = false;
   boardId!: number;
-  private strokes: Stroke[] = [];
-  undoStack: Stroke[][] = [];
-  redoStack: Stroke[][] = [];
+  private strokes: DrawItem[] = [];
+  undoStack: DrawItem[][] = [];
+  redoStack: DrawItem[][] = [];
   private userId: number | null = null;
   private strokeSeq = 0;
+  private boardVersion = 0;
 
   currentColor = '#000000';
   lineWidth = 2;
-  currentTool: 'brush' | 'eraser' = 'brush';
+  currentTool: Tool = 'brush';
 
   private lastX: number | null = null;
   private lastY: number | null = null;
   private lastCursorX: number | null = null;
   private lastCursorY: number | null = null;
   private activeStrokeId: string | null = null;
-  private activeStrokeBuffer: Stroke[] = [];
+  private activeStrokeBuffer: DrawItem[] = [];
+  private shapeStart: { x: number; y: number } | null = null;
+  private previewShape: ShapeItem | null = null;
+  private readonly cursorFadeMs = 1500;
+  private readonly cursorDropMs = 4000;
 
   constructor(
     private readonly route: ActivatedRoute,
@@ -55,13 +60,14 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.boardId = Number(this.route.snapshot.paramMap.get('id'));
     this.userId = this.authService.getUserId();
     this.subscriptions.push(
-      this.socketService.listen('board:state').subscribe(({ strokes }) => {
+      this.socketService.listen('board:state').subscribe(({ strokes, version }) => {
         this.strokes = Array.isArray(strokes)
           ? strokes.map((s, idx) => this.normalizeStroke(s, idx))
           : [];
         this.undoStack = [];
         this.redoStack = [];
         this.boardLoaded = true;
+        this.boardVersion = typeof version === 'number' ? version : 0;
         this.redrawAll();
       })
     );
@@ -77,7 +83,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
             y,
             displayName ?? `User ${userId}`,
             color ?? '#e53935',
-            (tool ?? 'brush') as 'brush' | 'eraser',
+            (tool ?? 'brush') as Tool,
           );
         })
     );
@@ -96,7 +102,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.socketService.emit('joinBoard', this.boardId);
 
     this.socketService.listen('draw').subscribe((data) => this.drawFromServer(data));
-    this.socketService.listen('undo').subscribe(({ strokeId }) => {
+    this.socketService.listen('undo').subscribe(({ strokeId, version }) => {
+      if (this.shouldResync(version)) return;
       if (!strokeId) return;
       const before = this.strokes.length;
       this.strokes = this.strokes.filter((s) => s.strokeId !== strokeId);
@@ -104,7 +111,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         this.redrawAll();
       }
     });
-    this.socketService.listen('clear').subscribe(() => {
+    this.socketService.listen('clear').subscribe(({ version }) => {
+      if (this.shouldResync(version)) return;
       this.clearLocal();
       this.strokes = [];
       this.undoStack = [];
@@ -139,6 +147,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         boardId: this.boardId,
       });
     });
+
   }
 
   ngOnDestroy() {
@@ -153,12 +162,16 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     const canvas = this.canvasRef.nativeElement;
     this.ctx.clearRect(0, 0, canvas.width, canvas.height);
     for (const stroke of this.strokes) {
-      this.applyStrokeStyle(stroke);
-      this.ctx.beginPath();
-      this.ctx.moveTo(stroke.fromX, stroke.fromY);
-      this.ctx.lineTo(stroke.toX, stroke.toY);
-      this.ctx.stroke();
-      this.resetComposite();
+      if (stroke.type === 'stroke') {
+        this.applyStrokeStyle(stroke);
+        this.ctx.beginPath();
+        this.ctx.moveTo(stroke.fromX, stroke.fromY);
+        this.ctx.lineTo(stroke.toX, stroke.toY);
+        this.ctx.stroke();
+        this.resetComposite();
+      } else {
+        this.drawShape(this.ctx, stroke);
+      }
     }
   }
 
@@ -171,18 +184,29 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         this.cursorCanvasRef.nativeElement.height
       );
 
-      this.cursorService.all().forEach(({ x, y, color, displayName, tool }) => {
+      if (this.previewShape) {
+        this.drawShape(this.cursorCtx, this.previewShape, true);
+      }
+
+      const now = Date.now();
+      for (const [userId, cursor] of this.cursorService.all().entries()) {
+        const age = now - cursor.lastSeen;
+        const alpha = Math.max(0.2, 1 - age / this.cursorFadeMs);
+
         this.cursorCtx.beginPath();
-        this.cursorCtx.arc(x, y, 4, 0, Math.PI * 2);
-        this.cursorCtx.fillStyle = color;
+        this.cursorCtx.arc(cursor.x, cursor.y, 4, 0, Math.PI * 2);
+        this.cursorCtx.fillStyle = this.applyAlpha(cursor.color, alpha);
         this.cursorCtx.fill();
 
-        const label = `${displayName} [${tool === 'eraser' ? 'E' : 'B'}]`;
-        this.cursorCtx.font = '12px Arial';
-        this.cursorCtx.fillStyle = color;
-        this.cursorCtx.fillText(label, x + 8, y - 8);
-      });
+        if (this.userId === null || this.userId !== userId) {
+          const label = `${cursor.displayName} [${this.toolLabel(cursor.tool)}]`;
+          this.cursorCtx.font = '12px Arial';
+          this.cursorCtx.fillStyle = this.applyAlpha(cursor.color, alpha);
+          this.cursorCtx.fillText(label, cursor.x + 8, cursor.y - 8);
+        }
+      }
 
+      this.cursorService.pruneStale(this.cursorDropMs);
       requestAnimationFrame(render);
     };
 
@@ -198,6 +222,11 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     return { x, y, inside };
   }
 
+  private isPointInsideCanvas(x: number, y: number) {
+    const canvasEl = this.canvasRef.nativeElement;
+    return x >= 0 && y >= 0 && x <= canvasEl.width && y <= canvasEl.height;
+  }
+
   @HostListener('mousedown', ['$event'])
   onMouseDown(event: MouseEvent) {
     if (!this.boardLoaded) return;
@@ -209,6 +238,18 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.lastY = y;
     this.activeStrokeId = this.createStrokeId();
     this.activeStrokeBuffer = [];
+
+    if (this.isShapeTool(this.currentTool)) {
+      this.shapeStart = { x, y };
+      this.previewShape = this.createPreviewShape(
+        this.currentTool,
+        x,
+        y,
+        x,
+        y,
+      );
+      return;
+    }
 
     this.applyStrokeStyle({
       color: this.currentColor,
@@ -225,12 +266,29 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
     const { x, y, inside } = this.getCanvasCoords(event);
     if (!inside) {
-      this.drawing = false;
-      this.lastX = this.lastY = null;
-      if (this.activeStrokeBuffer.length > 0) {
-        this.undoStack.push(this.activeStrokeBuffer);
-        this.activeStrokeBuffer = [];
-        this.activeStrokeId = null;
+      if (!this.isShapeTool(this.currentTool)) {
+        this.drawing = false;
+        this.lastX = this.lastY = null;
+        if (this.activeStrokeBuffer.length > 0) {
+          this.undoStack.push(this.activeStrokeBuffer);
+          this.activeStrokeBuffer = [];
+          this.activeStrokeId = null;
+        }
+      }
+      return;
+    }
+
+    if (this.isShapeTool(this.currentTool)) {
+      this.lastX = x;
+      this.lastY = y;
+      if (this.shapeStart) {
+        this.previewShape = this.createPreviewShape(
+          this.currentTool,
+          this.shapeStart.x,
+          this.shapeStart.y,
+          x,
+          y,
+        );
       }
       return;
     }
@@ -252,10 +310,11 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.resetComposite();
 
     // Save stroke for persistence
-    const stroke: Stroke = {
+    const stroke: DrawItem = {
       id: segmentId,
       strokeId,
       userId: strokeUserId,
+      type: 'stroke',
       fromX,
       fromY,
       toX: x,
@@ -287,6 +346,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       lineWidth: this.lineWidth,
       tool: this.currentTool,
     });
+    this.boardVersion += 1;
 
     // Debounced save trigger
   }
@@ -315,6 +375,45 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         this.activeStrokeBuffer = [];
         this.activeStrokeId = null;
       }
+      if (
+        this.isShapeTool(this.currentTool) &&
+        this.shapeStart &&
+        this.previewShape &&
+        this.isPointInsideCanvas(this.previewShape.x2, this.previewShape.y2)
+      ) {
+        const strokeId = this.activeStrokeId ?? this.createStrokeId();
+        const shapeItem = this.createShapeItem(
+          strokeId,
+          this.previewShape.shapeType,
+          this.previewShape.x1,
+          this.previewShape.y1,
+          this.previewShape.x2,
+          this.previewShape.y2,
+        );
+
+        this.strokes.push(shapeItem);
+        this.undoStack.push([shapeItem]);
+        this.redoStack = [];
+        this.drawShape(this.ctx, shapeItem);
+        this.socketService.emit('draw', {
+          type: 'shape',
+          id: shapeItem.id,
+          strokeId,
+          userId: this.userId ?? -1,
+          shapeType: shapeItem.shapeType,
+          x1: shapeItem.x1,
+          y1: shapeItem.y1,
+          x2: shapeItem.x2,
+          y2: shapeItem.y2,
+          color: shapeItem.color,
+          lineWidth: shapeItem.lineWidth,
+          tool: shapeItem.tool,
+        });
+        this.boardVersion += 1;
+      }
+      this.shapeStart = null;
+      this.previewShape = null;
+      this.activeStrokeId = null;
     }
   }
 
@@ -346,6 +445,24 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     if (key === 'e') {
       event.preventDefault();
       this.setTool('eraser');
+      return;
+    }
+
+    if (key === 'l') {
+      event.preventDefault();
+      this.setTool('line');
+      return;
+    }
+
+    if (key === 'r') {
+      event.preventDefault();
+      this.setTool('rect');
+      return;
+    }
+
+    if (key === 'c') {
+      event.preventDefault();
+      this.setTool('circle');
     }
   }
 
@@ -353,6 +470,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     if (!this.ctx) return;
 
     if (data.type === 'stroke') {
+      if (this.shouldResync(data.version)) return;
       this.applyStrokeStyle(data);
       this.ctx.beginPath();
       this.ctx.moveTo(data.fromX, data.fromY);
@@ -363,6 +481,12 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       // STORE REMOTE STROKE
       this.strokes.push(this.normalizeStroke(data, this.strokes.length));
     }
+    if (data.type === 'shape') {
+      if (this.shouldResync(data.version)) return;
+      const shape = this.normalizeStroke(data, this.strokes.length) as ShapeItem;
+      this.drawShape(this.ctx, shape);
+      this.strokes.push(shape);
+    }
   }
 
   clearBoard() {
@@ -371,6 +495,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.undoStack = [];
     this.redoStack = [];
     this.socketService.emit('clear', {});
+    this.boardVersion += 1;
   }
 
   clearLocal() {
@@ -378,7 +503,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
-  setTool(tool: 'brush' | 'eraser') {
+  setTool(tool: Tool) {
     this.currentTool = tool;
     if (this.lastCursorX !== null && this.lastCursorY !== null) {
       this.socketService.emit('cursor:move', {
@@ -399,6 +524,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.strokes = this.strokes.filter((s) => s.strokeId !== strokeId);
     this.redrawAll();
     this.socketService.emit('undo', { boardId: this.boardId, strokeId });
+    this.boardVersion += 1;
   }
 
   redo() {
@@ -410,6 +536,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     const strokeId = group[0]?.strokeId;
     if (!strokeId) return;
     this.socketService.emit('redo', { boardId: this.boardId, strokeId, strokes: group });
+    this.boardVersion += 1;
   }
 
   private applyStrokeStyle(stroke: { color?: string; lineWidth?: number; tool?: string }) {
@@ -441,33 +568,212 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     return `${strokeId}-${this.strokeSeq}`;
   }
 
-  private normalizeStroke(data: any, index: number): Stroke {
+  private normalizeStroke(data: any, index: number): DrawItem {
     const id = typeof data?.id === 'string' ? data.id : `legacy-${index}-${Date.now()}`;
     const strokeId = typeof data?.strokeId === 'string' ? data.strokeId : id;
+    const type = data?.type === 'shape' ? 'shape' : 'stroke';
+    if (type === 'shape') {
+      return {
+        id,
+        strokeId,
+        userId: typeof data?.userId === 'number' ? data.userId : -1,
+        type: 'shape',
+        shapeType: data.shapeType ?? 'line',
+        x1: data.x1,
+        y1: data.y1,
+        x2: data.x2,
+        y2: data.y2,
+        color: data.color ?? '#000000',
+        lineWidth: data.lineWidth ?? 2,
+        tool: 'brush',
+      };
+    }
     return {
       id,
       strokeId,
       userId: typeof data?.userId === 'number' ? data.userId : -1,
+      type: 'stroke',
       fromX: data.fromX,
       fromY: data.fromY,
       toX: data.toX,
       toY: data.toY,
       color: data.color ?? '#000000',
       lineWidth: data.lineWidth ?? 2,
-      tool: (data.tool ?? 'brush') as 'brush' | 'eraser',
+      tool: (data.tool ?? 'brush') as Tool,
     };
+  }
+
+  private shouldResync(version: number | undefined) {
+    if (typeof version !== 'number') return false;
+    if (version === this.boardVersion + 1) {
+      this.boardVersion = version;
+      return false;
+    }
+    if (version <= this.boardVersion) {
+      return true;
+    }
+    this.requestResync();
+    return true;
+  }
+
+  private requestResync() {
+    this.socketService.emit('board:resync', { boardId: this.boardId });
+  }
+
+  private applyAlpha(color: string, alpha: number) {
+    if (color.startsWith('hsl(')) {
+      return color.replace('hsl(', 'hsla(').replace(')', `, ${alpha})`);
+    }
+    if (color.startsWith('#') && (color.length === 7 || color.length === 4)) {
+      // convert to rgba
+      const hex = color.length === 4
+        ? `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`
+        : color;
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+    return color;
+  }
+
+  private toolLabel(tool: Tool) {
+    switch (tool) {
+      case 'eraser':
+        return 'E';
+      case 'line':
+        return 'L';
+      case 'rect':
+        return 'R';
+      case 'circle':
+        return 'C';
+      default:
+        return 'B';
+    }
+  }
+
+  private isShapeTool(tool: Tool) {
+    return tool === 'line' || tool === 'rect' || tool === 'circle';
+  }
+
+  private createPreviewShape(
+    tool: Tool,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+  ): ShapeItem {
+    const strokeId = this.activeStrokeId ?? 'preview';
+    return {
+      id: `${strokeId}-preview`,
+      strokeId,
+      userId: this.userId ?? -1,
+      type: 'shape',
+      shapeType: tool as 'line' | 'rect' | 'circle',
+      x1,
+      y1,
+      x2,
+      y2,
+      color: this.currentColor,
+      lineWidth: this.lineWidth,
+      tool: 'brush',
+    };
+  }
+
+  private createShapeItem(
+    strokeId: string,
+    shapeType: 'line' | 'rect' | 'circle',
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+  ): ShapeItem {
+    return {
+      id: this.createSegmentId(strokeId),
+      strokeId,
+      userId: this.userId ?? -1,
+      type: 'shape',
+      shapeType,
+      x1,
+      y1,
+      x2,
+      y2,
+      color: this.currentColor,
+      lineWidth: this.lineWidth,
+      tool: 'brush',
+    };
+  }
+
+  private drawShape(
+    ctx: CanvasRenderingContext2D,
+    shape: ShapeItem,
+    preview = false,
+  ) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = shape.color;
+    ctx.lineWidth = shape.lineWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (preview) {
+      ctx.globalAlpha = 0.6;
+      ctx.setLineDash([6, 4]);
+    }
+
+    if (shape.shapeType === 'line') {
+      ctx.beginPath();
+      ctx.moveTo(shape.x1, shape.y1);
+      ctx.lineTo(shape.x2, shape.y2);
+      ctx.stroke();
+    } else if (shape.shapeType === 'rect') {
+      const x = Math.min(shape.x1, shape.x2);
+      const y = Math.min(shape.y1, shape.y2);
+      const w = Math.abs(shape.x2 - shape.x1);
+      const h = Math.abs(shape.y2 - shape.y1);
+      ctx.strokeRect(x, y, w, h);
+    } else {
+      const cx = (shape.x1 + shape.x2) / 2;
+      const cy = (shape.y1 + shape.y2) / 2;
+      const rx = Math.abs(shape.x2 - shape.x1) / 2;
+      const ry = Math.abs(shape.y2 - shape.y1) / 2;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.restore();
   }
 }
 
-interface Stroke {
+type Tool = 'brush' | 'eraser' | 'line' | 'rect' | 'circle';
+
+interface StrokeItem {
   id: string;
   strokeId: string;
   userId: number;
+  type: 'stroke';
   fromX: number;
   fromY: number;
   toX: number;
   toY: number;
   color: string;
   lineWidth: number;
-  tool: 'brush' | 'eraser';
+  tool: Tool;
 }
+
+interface ShapeItem {
+  id: string;
+  strokeId: string;
+  userId: number;
+  type: 'shape';
+  shapeType: 'line' | 'rect' | 'circle';
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  color: string;
+  lineWidth: number;
+  tool: 'brush';
+}
+
+type DrawItem = StrokeItem | ShapeItem;

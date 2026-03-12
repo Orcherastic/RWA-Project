@@ -5,7 +5,8 @@ export interface CursorPosition {
   y: number;
   color: string;
   displayName: string;
-  tool: 'brush' | 'eraser';
+  tool: 'brush' | 'eraser' | 'line' | 'rect' | 'circle';
+  lastSeen: number;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -18,9 +19,16 @@ export class CursorService {
     y: number,
     displayName: string,
     color: string,
-    tool: 'brush' | 'eraser',
+    tool: 'brush' | 'eraser' | 'line' | 'rect' | 'circle',
   ) {
-    this.cursors.set(userId, { x, y, displayName, color, tool });
+    this.cursors.set(userId, {
+      x,
+      y,
+      displayName,
+      color,
+      tool,
+      lastSeen: Date.now(),
+    });
   }
 
   remove(userId: number) {
@@ -33,5 +41,14 @@ export class CursorService {
 
   clear() {
     this.cursors.clear();
+  }
+
+  pruneStale(maxAgeMs: number) {
+    const now = Date.now();
+    for (const [userId, cursor] of this.cursors.entries()) {
+      if (now - cursor.lastSeen > maxAgeMs) {
+        this.cursors.delete(userId);
+      }
+    }
   }
 }
