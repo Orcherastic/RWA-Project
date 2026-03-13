@@ -37,6 +37,96 @@ canvas {
   border-color: #2b2b2b;
 }
 
+.presence {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+  max-width: 280px;
+}
+
+.presence-label {
+  font-size: 12px;
+  color: #555;
+  white-space: nowrap;
+}
+
+.presence-list {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.presence-user {
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: #f0f0f0;
+  border: 1px solid #e0e0e0;
+}
+
+.color-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.color-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: #333;
+}
+
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 18px);
+  gap: 4px;
+}
+
+.color-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.color-label {
+  font-size: 11px;
+  color: #555;
+}
+
+.color-swatch {
+  width: 18px;
+  height: 18px;
+  border: 1px solid #777;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.color-swatch.small {
+  width: 14px;
+  height: 14px;
+}
+
+.color-swatch.active {
+  outline: 2px solid #111;
+  outline-offset: 1px;
+}
+
+.clear-status {
+  font-size: 12px;
+  color: #444;
+  align-self: center;
+}
+
 .line-width {
   display: flex;
   align-items: center;

@@ -26,6 +26,10 @@ export class BoardGateway {
   private readonly boardVersions = new Map<number, number>();
   private readonly maxSegments = 5000;
   private readonly compactTo = 4000;
+  private readonly clearVotes = new Map<
+    number,
+    { approvers: Set<number>; timer?: NodeJS.Timeout; expiresAt: number }
+  >();
 
   constructor(private readonly boardService: BoardService) {}
 
@@ -95,6 +99,7 @@ export class BoardGateway {
       this.boardRooms.delete(client.id);
 
       const roomSize = this.server.sockets.adapter.rooms.get(room)?.size ?? 0;
+      this.maybeFinalizeClear(boardId, roomSize);
       if (roomSize === 0) {
         // no active clients: free memory (state is already persisted)
         this.boardStates.delete(boardId);
@@ -104,10 +109,19 @@ export class BoardGateway {
           clearTimeout(timer);
           this.saveTimers.delete(boardId);
         }
+        const clearVote = this.clearVotes.get(boardId);
+        if (clearVote?.timer) {
+          clearTimeout(clearVote.timer);
+        }
+        this.clearVotes.delete(boardId);
       }
     }
 
     console.log('Client disconnected:', client.id);
+    if (boardId) {
+      const users = this.getPresenceList(boardId);
+      this.server.to(`board-${boardId}`).emit('presence:update', { users });
+    }
   }
 
   // JOIN BOARD
@@ -151,7 +165,8 @@ export class BoardGateway {
           typeof s?.strokeId === 'string'
             ? s.strokeId
             : (typeof s?.id === 'string' ? s.id : `legacy-${boardId}-${idx}`);
-        const type = s?.type === 'shape' ? 'shape' : 'stroke';
+        const type =
+          s?.type === 'shape' ? 'shape' : s?.type === 'fill' ? 'fill' : 'stroke';
         if (type === 'shape') {
           return {
             id,
@@ -166,6 +181,19 @@ export class BoardGateway {
             color: s.color,
             lineWidth: s.lineWidth,
             tool: 'brush',
+          };
+        }
+        if (type === 'fill') {
+          return {
+            id,
+            strokeId,
+            type: 'fill',
+            userId: typeof s?.userId === 'number' ? s.userId : -1,
+            x: s.x,
+            y: s.y,
+            color: s.color,
+            tolerance: s.tolerance ?? 16,
+            tool: 'fill',
           };
         }
         return {
@@ -190,6 +218,26 @@ export class BoardGateway {
       strokes: this.boardStates.get(boardId) ?? [],
       version: this.boardVersions.get(boardId) ?? 0,
     });
+
+    const users = this.getPresenceList(boardId);
+    this.server.to(room).emit('presence:update', { users });
+  }
+
+  // LEAVE BOARD
+  @SubscribeMessage('leaveBoard')
+  handleLeaveBoard(@ConnectedSocket() client: Socket) {
+    const boardId = this.boardRooms.get(client.id);
+    if (!boardId) return;
+
+    const room = `board-${boardId}`;
+    client.leave(room);
+    this.boardRooms.delete(client.id);
+
+    const roomSize = this.server.sockets.adapter.rooms.get(room)?.size ?? 0;
+    this.maybeFinalizeClear(boardId, roomSize);
+
+    const users = this.getPresenceList(boardId);
+    this.server.to(room).emit('presence:update', { users });
   }
 
   // DRAW
@@ -198,7 +246,7 @@ export class BoardGateway {
     const boardId = this.boardRooms.get(client.id);
     if (!boardId) return;
 
-    if (data?.type === 'stroke' || data?.type === 'shape') {
+    if (data?.type === 'stroke' || data?.type === 'shape' || data?.type === 'fill') {
       const user = client.data.user;
       if (!user) return;
       const strokeId = data.strokeId ?? data.id ?? `${user.id}-${Date.now()}`;
@@ -218,6 +266,18 @@ export class BoardGateway {
           color: data.color,
           lineWidth: data.lineWidth,
           tool: 'brush',
+        });
+      } else if (data.type === 'fill') {
+        strokes.push({
+          id: segmentId,
+          strokeId,
+          type: 'fill',
+          userId: user.id,
+          x: data.x,
+          y: data.y,
+          color: data.color,
+          tolerance: data.tolerance ?? 16,
+          tool: 'fill',
         });
       } else {
         strokes.push({
@@ -331,6 +391,20 @@ export class BoardGateway {
         };
         strokes.push(entry);
         broadcast.push(entry);
+      } else if (seg.type === 'fill') {
+        const entry = {
+          id: segmentId,
+          strokeId,
+          type: 'fill',
+          userId: user.id,
+          x: seg.x,
+          y: seg.y,
+          color: seg.color,
+          tolerance: seg.tolerance ?? 16,
+          tool: 'fill',
+        };
+        strokes.push(entry);
+        broadcast.push(entry);
       } else {
         const entry = {
           id: segmentId,
@@ -415,10 +489,48 @@ export class BoardGateway {
     const boardId = this.boardRooms.get(client.id);
     if (!boardId) return;
 
-    this.boardStates.set(boardId, []);
-    const version = this.bumpVersion(boardId);
-    this.scheduleSave(boardId);
-    client.to(`board-${boardId}`).emit('clear', { version });
+    const user = client.data.user;
+    if (!user) return;
+
+    const room = `board-${boardId}`;
+    const roomSize = this.server.sockets.adapter.rooms.get(room)?.size ?? 0;
+    if (roomSize <= 1) {
+      this.applyClear(boardId, room);
+      return;
+    }
+
+    const existing = this.clearVotes.get(boardId);
+    const approvers = existing?.approvers ?? new Set<number>();
+    approvers.add(user.id);
+
+    if (existing?.timer) {
+      clearTimeout(existing.timer);
+    }
+
+    const expiresAt = Date.now() + 10_000;
+    const timer = setTimeout(() => {
+      this.clearVotes.delete(boardId);
+      this.server.to(room).emit('clear:status', {
+        approvals: 0,
+        required: roomSize,
+        approvers: [],
+        expiresAt: null,
+      });
+    }, 10_000);
+
+    this.clearVotes.set(boardId, { approvers, timer, expiresAt });
+    this.server.to(room).emit('clear:status', {
+      approvals: approvers.size,
+      required: roomSize,
+      approvers: Array.from(approvers),
+      expiresAt,
+    });
+
+    if (approvers.size >= roomSize) {
+      if (timer) clearTimeout(timer);
+      this.clearVotes.delete(boardId);
+      this.applyClear(boardId, room);
+    }
   }
 
   // RESYNC
@@ -458,6 +570,50 @@ export class BoardGateway {
     const next = (this.boardVersions.get(boardId) ?? 0) + 1;
     this.boardVersions.set(boardId, next);
     return next;
+  }
+
+  private applyClear(boardId: number, room: string) {
+    this.boardStates.set(boardId, []);
+    const version = this.bumpVersion(boardId);
+    this.scheduleSave(boardId);
+    this.server.to(room).emit('clear', { version });
+    this.server.to(room).emit('clear:status', {
+      approvals: 0,
+      required: 0,
+      approvers: [],
+      expiresAt: null,
+    });
+  }
+
+  private maybeFinalizeClear(boardId: number, roomSize: number) {
+    const vote = this.clearVotes.get(boardId);
+    if (!vote) return;
+    if (roomSize <= 1) {
+      if (vote.timer) clearTimeout(vote.timer);
+      this.clearVotes.delete(boardId);
+      this.applyClear(boardId, `board-${boardId}`);
+      return;
+    }
+    if (vote.approvers.size >= roomSize) {
+      if (vote.timer) clearTimeout(vote.timer);
+      this.clearVotes.delete(boardId);
+      this.applyClear(boardId, `board-${boardId}`);
+    }
+  }
+
+  private getPresenceList(boardId: number) {
+    const users: Array<{ id: number; displayName: string }> = [];
+    for (const [socketId, bId] of this.boardRooms.entries()) {
+      if (bId !== boardId) continue;
+      const sock = this.server.sockets.sockets.get(socketId);
+      const user = sock?.data?.user;
+      if (user?.id) {
+        users.push({ id: user.id, displayName: user.displayName ?? `User ${user.id}` });
+      }
+    }
+    const unique = new Map<number, { id: number; displayName: string }>();
+    for (const u of users) unique.set(u.id, u);
+    return Array.from(unique.values());
   }
 
   private maybeCompact(boardId: number) {

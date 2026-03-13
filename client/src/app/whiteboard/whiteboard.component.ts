@@ -33,10 +33,36 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   private userId: number | null = null;
   private strokeSeq = 0;
   private boardVersion = 0;
+  presenceUsers: Array<{ id: number; displayName: string }> = [];
+  clearStatus: {
+    approvals: number;
+    required: number;
+    approvers: number[];
+    expiresAt: number | null;
+  } | null = null;
 
   currentColor = '#000000';
   lineWidth = 2;
   currentTool: Tool = 'brush';
+  readonly paletteColors = [
+    '#000000',
+    '#7f7f7f',
+    '#ffffff',
+    '#ff0000',
+    '#ff7f00',
+    '#ffff00',
+    '#00ff00',
+    '#00ffff',
+    '#0000ff',
+    '#7f00ff',
+    '#ff00ff',
+    '#a52a2a',
+    '#8b4513',
+    '#f4a460',
+    '#2e8b57',
+    '#4682b4',
+  ];
+  recentColors: string[] = [];
 
   private lastX: number | null = null;
   private lastY: number | null = null;
@@ -117,6 +143,13 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       this.strokes = [];
       this.undoStack = [];
       this.redoStack = [];
+      this.clearStatus = null;
+    });
+    this.socketService.listen('clear:status').subscribe((status) => {
+      this.clearStatus = status;
+    });
+    this.socketService.listen('presence:update').subscribe(({ users }) => {
+      this.presenceUsers = Array.isArray(users) ? users : [];
     });
 
     const cursor = this.cursorCanvasRef.nativeElement;
@@ -152,6 +185,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   ngOnDestroy() {
     this.subscriptions.forEach(sub => sub.unsubscribe());
+    this.socketService.emit('leaveBoard', {});
     this.socketService.emit('cursor:leave', {
       boardId: this.boardId,
     });
@@ -169,8 +203,10 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         this.ctx.lineTo(stroke.toX, stroke.toY);
         this.ctx.stroke();
         this.resetComposite();
-      } else {
+      } else if (stroke.type === 'shape') {
         this.drawShape(this.ctx, stroke);
+      } else {
+        this.applyFill(stroke);
       }
     }
   }
@@ -227,7 +263,6 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     return x >= 0 && y >= 0 && x <= canvasEl.width && y <= canvasEl.height;
   }
 
-  @HostListener('mousedown', ['$event'])
   onMouseDown(event: MouseEvent) {
     if (!this.boardLoaded) return;
     const { x, y, inside } = this.getCanvasCoords(event);
@@ -238,6 +273,33 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.lastY = y;
     this.activeStrokeId = this.createStrokeId();
     this.activeStrokeBuffer = [];
+
+    if (this.currentTool === 'fill') {
+      const strokeId = this.activeStrokeId;
+      const segmentId = this.createSegmentId(strokeId);
+      const fillItem: FillItem = {
+        id: segmentId,
+        strokeId,
+        userId: this.userId ?? -1,
+        type: 'fill',
+        x,
+        y,
+        color: this.currentColor,
+        tolerance: 16,
+        tool: 'fill',
+      };
+      this.applyFill(fillItem);
+      this.strokes.push(fillItem);
+      this.undoStack.push([fillItem]);
+      this.redoStack = [];
+      this.socketService.emit('draw', {
+        ...fillItem,
+      });
+      this.boardVersion += 1;
+      this.drawing = false;
+      this.activeStrokeId = null;
+      return;
+    }
 
     if (this.isShapeTool(this.currentTool)) {
       this.shapeStart = { x, y };
@@ -260,7 +322,6 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.ctx.moveTo(x, y);
   }
 
-  @HostListener('mousemove', ['$event'])
   onMouseMove(event: MouseEvent) {
     if (!this.drawing || this.lastX === null || this.lastY === null) return;
 
@@ -364,8 +425,6 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.drawing = false;
   }
 
-  @HostListener('mouseup')
-  @HostListener('mouseleave')
   stopDrawing() {
     if (this.drawing) {
       this.drawing = false;
@@ -448,6 +507,12 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       return;
     }
 
+    if (key === 'f') {
+      event.preventDefault();
+      this.setTool('fill');
+      return;
+    }
+
     if (key === 'l') {
       event.preventDefault();
       this.setTool('line');
@@ -487,15 +552,16 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       this.drawShape(this.ctx, shape);
       this.strokes.push(shape);
     }
+    if (data.type === 'fill') {
+      if (this.shouldResync(data.version)) return;
+      const fill = this.normalizeStroke(data, this.strokes.length) as FillItem;
+      this.applyFill(fill);
+      this.strokes.push(fill);
+    }
   }
 
   clearBoard() {
-    this.clearLocal();
-    this.strokes = [];
-    this.undoStack = [];
-    this.redoStack = [];
     this.socketService.emit('clear', {});
-    this.boardVersion += 1;
   }
 
   clearLocal() {
@@ -513,6 +579,15 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         tool: this.currentTool,
       });
     }
+  }
+
+  setColor(color: string) {
+    this.currentColor = color;
+    this.pushRecentColor(color);
+  }
+
+  onColorInput(value: string) {
+    this.setColor(value);
   }
 
   undo() {
@@ -537,6 +612,11 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     if (!strokeId) return;
     this.socketService.emit('redo', { boardId: this.boardId, strokeId, strokes: group });
     this.boardVersion += 1;
+  }
+
+  hasApprovedClear() {
+    const uid = this.userId ?? -1;
+    return !!this.clearStatus?.approvers?.includes(uid);
   }
 
   private applyStrokeStyle(stroke: { color?: string; lineWidth?: number; tool?: string }) {
@@ -568,10 +648,18 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     return `${strokeId}-${this.strokeSeq}`;
   }
 
+  private pushRecentColor(color: string) {
+    const normalized = color.toLowerCase();
+    this.recentColors = [
+      normalized,
+      ...this.recentColors.filter((c) => c.toLowerCase() !== normalized),
+    ].slice(0, 8);
+  }
+
   private normalizeStroke(data: any, index: number): DrawItem {
     const id = typeof data?.id === 'string' ? data.id : `legacy-${index}-${Date.now()}`;
     const strokeId = typeof data?.strokeId === 'string' ? data.strokeId : id;
-    const type = data?.type === 'shape' ? 'shape' : 'stroke';
+    const type = data?.type === 'shape' ? 'shape' : data?.type === 'fill' ? 'fill' : 'stroke';
     if (type === 'shape') {
       return {
         id,
@@ -586,6 +674,19 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         color: data.color ?? '#000000',
         lineWidth: data.lineWidth ?? 2,
         tool: 'brush',
+      };
+    }
+    if (type === 'fill') {
+      return {
+        id,
+        strokeId,
+        userId: typeof data?.userId === 'number' ? data.userId : -1,
+        type: 'fill',
+        x: data.x,
+        y: data.y,
+        color: data.color ?? '#000000',
+        tolerance: data.tolerance ?? 16,
+        tool: 'fill',
       };
     }
     return {
@@ -647,6 +748,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         return 'R';
       case 'circle':
         return 'C';
+      case 'fill':
+        return 'F';
       default:
         return 'B';
     }
@@ -743,9 +846,92 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
     ctx.restore();
   }
+
+  private applyFill(fill: FillItem) {
+    const canvas = this.canvasRef.nativeElement;
+    const ctx = this.ctx;
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const { data, width, height } = img;
+
+    const startX = Math.floor(fill.x);
+    const startY = Math.floor(fill.y);
+    if (startX < 0 || startY < 0 || startX >= width || startY >= height) return;
+
+    const startIdx = (startY * width + startX) * 4;
+    const target: [number, number, number, number] = [
+      data[startIdx],
+      data[startIdx + 1],
+      data[startIdx + 2],
+      data[startIdx + 3],
+    ];
+
+    const fillColor = this.hexToRgba(fill.color);
+    if (!fillColor) return;
+
+    if (this.colorMatch(target, fillColor, fill.tolerance)) return;
+
+    const stack: Array<[number, number]> = [[startX, startY]];
+    const visited = new Uint8Array(width * height);
+    const tol = fill.tolerance;
+
+    while (stack.length) {
+      const [x, y] = stack.pop()!;
+      if (x < 0 || y < 0 || x >= width || y >= height) continue;
+      const idx = y * width + x;
+      if (visited[idx]) continue;
+      visited[idx] = 1;
+
+      const off = idx * 4;
+      const current: [number, number, number, number] = [
+        data[off],
+        data[off + 1],
+        data[off + 2],
+        data[off + 3],
+      ];
+
+      if (!this.colorMatch(current, target, tol)) continue;
+
+      data[off] = fillColor[0];
+      data[off + 1] = fillColor[1];
+      data[off + 2] = fillColor[2];
+      data[off + 3] = fillColor[3];
+
+      stack.push([x + 1, y]);
+      stack.push([x - 1, y]);
+      stack.push([x, y + 1]);
+      stack.push([x, y - 1]);
+    }
+
+    ctx.putImageData(img, 0, 0);
+  }
+
+  private hexToRgba(color: string): [number, number, number, number] | null {
+    if (!color.startsWith('#')) return null;
+    const hex =
+      color.length === 4
+        ? `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`
+        : color;
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return [r, g, b, 255];
+  }
+
+  private colorMatch(
+    a: [number, number, number, number],
+    b: [number, number, number, number],
+    tolerance: number,
+  ) {
+    return (
+      Math.abs(a[0] - b[0]) <= tolerance &&
+      Math.abs(a[1] - b[1]) <= tolerance &&
+      Math.abs(a[2] - b[2]) <= tolerance &&
+      Math.abs(a[3] - b[3]) <= tolerance
+    );
+  }
 }
 
-type Tool = 'brush' | 'eraser' | 'line' | 'rect' | 'circle';
+type Tool = 'brush' | 'eraser' | 'line' | 'rect' | 'circle' | 'fill';
 
 interface StrokeItem {
   id: string;
@@ -776,4 +962,16 @@ interface ShapeItem {
   tool: 'brush';
 }
 
-type DrawItem = StrokeItem | ShapeItem;
+interface FillItem {
+  id: string;
+  strokeId: string;
+  userId: number;
+  type: 'fill';
+  x: number;
+  y: number;
+  color: string;
+  tolerance: number;
+  tool: 'fill';
+}
+
+type DrawItem = StrokeItem | ShapeItem | FillItem;

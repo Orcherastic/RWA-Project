@@ -1,4 +1,12 @@
 <div class="toolbar" style="margin-bottom: 10px; display: flex; gap: 10px; align-items: center;">
+  <div class="presence">
+    <div class="presence-label">Online:</div>
+    <div class="presence-list">
+      <span class="presence-user" *ngFor="let u of presenceUsers">
+        {{ u.displayName }}
+      </span>
+    </div>
+  </div>
   <div class="tool-group">
     <button
       type="button"
@@ -15,6 +23,14 @@
       (click)="setTool('eraser')"
     >
       Eraser
+    </button>
+    <button
+      type="button"
+      class="tool-button"
+      [class.active]="currentTool === 'fill'"
+      (click)="setTool('fill')"
+    >
+      Fill
     </button>
   </div>
   <div class="tool-group">
@@ -51,10 +67,39 @@
       Redo
     </button>
   </div>
-  <label>
-    Color:
-    <input type="color" [(ngModel)]="currentColor" />
-  </label>
+  <div class="color-block">
+    <div class="color-header">Colors</div>
+    <div class="color-grid">
+      <button
+        *ngFor="let c of paletteColors"
+        type="button"
+        class="color-swatch"
+        [style.background]="c"
+        [class.active]="currentColor === c"
+        (click)="setColor(c)"
+        [attr.aria-label]="'Color ' + c"
+      ></button>
+    </div>
+    <div class="color-row">
+      <span class="color-label">Recent:</span>
+      <button
+        *ngFor="let c of recentColors"
+        type="button"
+        class="color-swatch small"
+        [style.background]="c"
+        [class.active]="currentColor === c"
+        (click)="setColor(c)"
+        [attr.aria-label]="'Recent color ' + c"
+      ></button>
+      <span class="color-label">Custom:</span>
+      <input
+        type="color"
+        [ngModel]="currentColor"
+        (ngModelChange)="onColorInput($event)"
+        aria-label="Custom color"
+      />
+    </div>
+  </div>
 
   <label class="line-width">
     Line width:
@@ -74,9 +119,14 @@
     ></span>
   </label>
 
-  <button (click)="clearBoard()">
-    Clear Board
-  </button>
+  <div class="tool-group">
+    <button (click)="clearBoard()" [disabled]="hasApprovedClear()">
+      Request Clear
+    </button>
+    <span class="clear-status" *ngIf="clearStatus">
+      {{ clearStatus.approvals }}/{{ clearStatus.required }}
+    </span>
+  </div>
 </div>
 
 <div class="board-container" style="position: relative; display: inline-block;">
