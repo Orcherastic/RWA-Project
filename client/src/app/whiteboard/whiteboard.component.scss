@@ -14,8 +14,21 @@
   pointer-events: none;
 }
 
+.draw-blocked {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 6px 10px;
+  background: rgba(255, 236, 227, 0.95);
+  color: #8a2f00;
+  border: 1px solid #f3c7b8;
+  border-radius: 6px;
+  font-size: 12px;
+  pointer-events: none;
+}
+
 canvas {
-  cursor: crosshair;
+  cursor: default;
 }
 
 .tool-group {
@@ -66,6 +79,104 @@ canvas {
   border-radius: 10px;
   background: #f0f0f0;
   border: 1px solid #e0e0e0;
+}
+
+.layers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+  min-width: 180px;
+}
+
+.layers-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #333;
+}
+
+.layers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.layer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: #fff;
+  border: 1px solid #e6e6e6;
+  cursor: pointer;
+}
+
+.layer-row.active {
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 1px #1a73e8 inset;
+}
+
+.layer-visibility {
+  font-size: 10px;
+  padding: 2px 4px;
+  border: 1px solid #bbb;
+  background: #f6f6f6;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.layer-name {
+  flex: 1;
+  font-size: 12px;
+  color: #333;
+}
+
+.layer-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.layer-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: #fbe9e7;
+  color: #a33a00;
+  border: 1px solid #f3c7b8;
+}
+
+.tool-button.small {
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+.tool-button.small.danger {
+  background: #ffe9e6;
+  border-color: #f5b9b0;
+  color: #a53120;
+}
+
+.connection {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  background: #e9f6ee;
+  color: #1f7a3f;
+  border: 1px solid #cfead9;
+  white-space: nowrap;
+}
+
+.connection.offline {
+  background: #fff1e6;
+  color: #a04a00;
+  border-color: #ffd7b8;
 }
 
 .color-block {

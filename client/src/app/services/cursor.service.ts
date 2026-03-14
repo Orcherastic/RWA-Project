@@ -5,7 +5,7 @@ export interface CursorPosition {
   y: number;
   color: string;
   displayName: string;
-  tool: 'brush' | 'eraser' | 'line' | 'rect' | 'circle' | 'fill';
+  tool: 'brush' | 'eraser' | 'line' | 'rect' | 'circle' | 'fill' | 'select';
   lastSeen: number;
 }
 
@@ -19,7 +19,7 @@ export class CursorService {
     y: number,
     displayName: string,
     color: string,
-    tool: 'brush' | 'eraser' | 'line' | 'rect' | 'circle' | 'fill',
+    tool: 'brush' | 'eraser' | 'line' | 'rect' | 'circle' | 'fill' | 'select',
   ) {
     this.cursors.set(userId, {
       x,

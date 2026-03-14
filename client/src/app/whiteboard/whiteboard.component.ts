@@ -28,8 +28,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   private boardLoaded = false;
   boardId!: number;
   private strokes: DrawItem[] = [];
-  undoStack: DrawItem[][] = [];
-  redoStack: DrawItem[][] = [];
+  undoStack: DrawAction[][] = [];
+  redoStack: DrawAction[][] = [];
   private userId: number | null = null;
   private strokeSeq = 0;
   private boardVersion = 0;
@@ -40,6 +40,10 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     approvers: number[];
     expiresAt: number | null;
   } | null = null;
+  connectionStatus: 'online' | 'reconnecting' | 'offline' = 'offline';
+  layers: Layer[] = [{ id: 'layer-1', name: 'Layer 1', visible: true }];
+  activeLayerId = 'layer-1';
+  shareCopied = false;
 
   currentColor = '#000000';
   lineWidth = 2;
@@ -74,6 +78,15 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   private previewShape: ShapeItem | null = null;
   private readonly cursorFadeMs = 1500;
   private readonly cursorDropMs = 4000;
+  private constrainShape = false;
+  private selectedShapeId: string | null = null;
+  private isDraggingShape = false;
+  private isResizingShape = false;
+  private dragOffset: { x: number; y: number } | null = null;
+  private resizeHandle: ResizeHandle | null = null;
+  private selectionDirty = false;
+  private selectedShapePreview: ShapeItem | null = null;
+  private selectedShapeOriginal: ShapeItem | null = null;
 
   constructor(
     private readonly route: ActivatedRoute,
@@ -86,10 +99,37 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.boardId = Number(this.route.snapshot.paramMap.get('id'));
     this.userId = this.authService.getUserId();
     this.subscriptions.push(
-      this.socketService.listen('board:state').subscribe(({ strokes, version }) => {
+      this.socketService.listen('connect').subscribe(() => {
+        this.connectionStatus = 'online';
+        this.socketService.emit('joinBoard', this.boardId);
+        this.socketService.emit('board:resync', { boardId: this.boardId });
+      })
+    );
+    this.subscriptions.push(
+      this.socketService.listen('disconnect').subscribe(() => {
+        this.connectionStatus = 'offline';
+      })
+    );
+    this.subscriptions.push(
+      this.socketService.listen('reconnect_attempt').subscribe(() => {
+        this.connectionStatus = 'reconnecting';
+      })
+    );
+    this.subscriptions.push(
+      this.socketService.listen('board:state').subscribe(({ strokes, layers, version }) => {
         this.strokes = Array.isArray(strokes)
           ? strokes.map((s, idx) => this.normalizeStroke(s, idx))
           : [];
+        if (Array.isArray(layers) && layers.length > 0) {
+          this.layers = layers.map((l) => ({
+            id: l.id,
+            name: l.name,
+            visible: l.visible !== false,
+          }));
+          if (!this.layers.find((l) => l.id === this.activeLayerId)) {
+            this.activeLayerId = this.layers[0].id;
+          }
+        }
         this.undoStack = [];
         this.redoStack = [];
         this.boardLoaded = true;
@@ -148,8 +188,31 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.socketService.listen('clear:status').subscribe((status) => {
       this.clearStatus = status;
     });
+    this.socketService.listen('shape:update').subscribe((data) => {
+      if (this.shouldResync(data?.version)) return;
+      if (!data?.id) return;
+      const idx = this.strokes.findIndex((s) => s.type === 'shape' && s.id === data.id);
+      if (idx >= 0) {
+        const updated = this.normalizeStroke({ ...data, type: 'shape' }, idx) as ShapeItem;
+        this.strokes[idx] = updated;
+        this.redrawAll();
+      }
+    });
     this.socketService.listen('presence:update').subscribe(({ users }) => {
       this.presenceUsers = Array.isArray(users) ? users : [];
+    });
+    this.socketService.listen('layers:update').subscribe(({ layers }) => {
+      if (Array.isArray(layers) && layers.length > 0) {
+        this.layers = layers.map((l) => ({
+          id: l.id,
+          name: l.name,
+          visible: l.visible !== false,
+        }));
+        if (!this.layers.find((l) => l.id === this.activeLayerId)) {
+          this.activeLayerId = this.layers[0].id;
+        }
+        this.redrawAll();
+      }
     });
 
     const cursor = this.cursorCanvasRef.nativeElement;
@@ -171,6 +234,13 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         y,
         tool: this.currentTool,
       });
+    });
+
+    fromEvent<MouseEvent>(canvas, 'mousemove').subscribe((event) => {
+      const { x, y, inside } = this.getCanvasCoords(event);
+      if (!inside) return;
+      this.lastCursorX = x;
+      this.lastCursorY = y;
     });
 
     fromEvent<MouseEvent>(canvas, 'mouseleave').subscribe(() => {
@@ -195,18 +265,23 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   private redrawAll() {
     const canvas = this.canvasRef.nativeElement;
     this.ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (const stroke of this.strokes) {
-      if (stroke.type === 'stroke') {
-        this.applyStrokeStyle(stroke);
-        this.ctx.beginPath();
-        this.ctx.moveTo(stroke.fromX, stroke.fromY);
-        this.ctx.lineTo(stroke.toX, stroke.toY);
-        this.ctx.stroke();
-        this.resetComposite();
-      } else if (stroke.type === 'shape') {
-        this.drawShape(this.ctx, stroke);
-      } else {
-        this.applyFill(stroke);
+    const orderedLayers = [...this.layers].reverse();
+    for (const layer of orderedLayers) {
+      if (!layer.visible) continue;
+      for (const stroke of this.strokes) {
+        if (stroke.layerId !== layer.id) continue;
+        if (stroke.type === 'stroke') {
+          this.applyStrokeStyle(stroke);
+          this.ctx.beginPath();
+          this.ctx.moveTo(stroke.fromX, stroke.fromY);
+          this.ctx.lineTo(stroke.toX, stroke.toY);
+          this.ctx.stroke();
+          this.resetComposite();
+        } else if (stroke.type === 'shape') {
+          this.drawShape(this.ctx, stroke);
+        } else {
+          this.applyFill(stroke);
+        }
       }
     }
   }
@@ -223,6 +298,12 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       if (this.previewShape) {
         this.drawShape(this.cursorCtx, this.previewShape, true);
       }
+      const livePreview = this.getLiveShapePreview();
+      if (livePreview) {
+        this.drawShape(this.cursorCtx, livePreview, true);
+      }
+      this.drawBrushPreview();
+      this.drawSelectionOverlay();
 
       const now = Date.now();
       for (const [userId, cursor] of this.cursorService.all().entries()) {
@@ -265,8 +346,34 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   onMouseDown(event: MouseEvent) {
     if (!this.boardLoaded) return;
+    if (!this.isLayerVisible(this.activeLayerId)) return;
     const { x, y, inside } = this.getCanvasCoords(event);
     if (!inside) return;
+
+    if (this.currentTool === 'select') {
+      const hit = this.hitTestShape(x, y);
+      if (!hit) {
+        this.selectedShapeId = null;
+        this.isDraggingShape = false;
+        this.isResizingShape = false;
+        this.resizeHandle = null;
+        this.selectedShapePreview = null;
+        this.selectedShapeOriginal = null;
+        return;
+      }
+      this.selectedShapeId = hit.shape.id;
+      this.selectedShapeOriginal = this.cloneShape(hit.shape);
+      this.selectedShapePreview = this.cloneShape(hit.shape);
+      if (hit.handle) {
+        this.isResizingShape = true;
+        this.resizeHandle = hit.handle;
+      } else {
+        this.isDraggingShape = true;
+        this.dragOffset = { x: x - hit.shape.x1, y: y - hit.shape.y1 };
+      }
+      this.selectionDirty = false;
+      return;
+    }
 
     this.drawing = true;
     this.lastX = x;
@@ -287,6 +394,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         color: this.currentColor,
         tolerance: 16,
         tool: 'fill',
+        layerId: this.activeLayerId,
       };
       this.applyFill(fillItem);
       this.strokes.push(fillItem);
@@ -323,9 +431,37 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   }
 
   onMouseMove(event: MouseEvent) {
-    if (!this.drawing || this.lastX === null || this.lastY === null) return;
-
     const { x, y, inside } = this.getCanvasCoords(event);
+    if (inside) {
+      this.lastCursorX = x;
+      this.lastCursorY = y;
+    }
+    if (this.currentTool === 'select') {
+      if (!this.selectedShapeId) return;
+      const shape = this.selectedShapeOriginal;
+      if (!shape) return;
+      if (this.isDraggingShape && this.dragOffset) {
+        const dx = x - this.dragOffset.x;
+        const dy = y - this.dragOffset.y;
+        const w = shape.x2 - shape.x1;
+        const h = shape.y2 - shape.y1;
+        const preview = this.cloneShape(shape);
+        preview.x1 = dx;
+        preview.y1 = dy;
+        preview.x2 = dx + w;
+        preview.y2 = dy + h;
+        this.selectedShapePreview = preview;
+        this.selectionDirty = true;
+      } else if (this.isResizingShape && this.resizeHandle) {
+        const preview = this.cloneShape(shape);
+        this.applyResize(preview, this.resizeHandle, x, y);
+        this.selectedShapePreview = preview;
+        this.selectionDirty = true;
+      }
+      return;
+    }
+
+    if (!this.drawing || this.lastX === null || this.lastY === null) return;
     if (!inside) {
       if (!this.isShapeTool(this.currentTool)) {
         this.drawing = false;
@@ -343,12 +479,19 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       this.lastX = x;
       this.lastY = y;
       if (this.shapeStart) {
-        this.previewShape = this.createPreviewShape(
+        const adjusted = this.applyConstrain(
           this.currentTool,
           this.shapeStart.x,
           this.shapeStart.y,
           x,
           y,
+        );
+        this.previewShape = this.createPreviewShape(
+          this.currentTool,
+          this.shapeStart.x,
+          this.shapeStart.y,
+          adjusted.x2,
+          adjusted.y2,
         );
       }
       return;
@@ -383,6 +526,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       color: this.currentColor,
       lineWidth: this.lineWidth,
       tool: this.currentTool,
+      layerId: this.activeLayerId,
     };
     this.strokes.push(stroke);
     if (this.userId !== null) {
@@ -474,6 +618,43 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       this.previewShape = null;
       this.activeStrokeId = null;
     }
+    if (this.currentTool === 'select') {
+      if (
+        this.selectionDirty &&
+        this.selectedShapeId &&
+        this.selectedShapePreview &&
+        this.selectedShapeOriginal
+      ) {
+        const idx = this.strokes.findIndex(
+          (s) => s.type === 'shape' && s.id === this.selectedShapeId,
+        );
+        if (idx >= 0) {
+          const before = this.cloneShape(this.selectedShapeOriginal);
+          const after = this.cloneShape(this.selectedShapePreview);
+          this.strokes[idx] = after;
+          this.redrawAll();
+          this.socketService.emit('shape:update', {
+            ...after,
+          });
+          this.undoStack.push([
+            {
+              type: 'update',
+              targetId: after.id,
+              before,
+              after,
+            },
+          ]);
+          this.redoStack = [];
+        }
+      }
+      this.isDraggingShape = false;
+      this.isResizingShape = false;
+      this.dragOffset = null;
+      this.resizeHandle = null;
+      this.selectionDirty = false;
+      this.selectedShapeOriginal = null;
+      this.selectedShapePreview = null;
+    }
   }
 
   @HostListener('window:keydown', ['$event'])
@@ -482,6 +663,9 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
     const key = event.key.toLowerCase();
     const ctrlOrMeta = event.ctrlKey || event.metaKey;
+    if (event.key === 'Shift') {
+      this.constrainShape = true;
+    }
 
     if (ctrlOrMeta && key === 'z' && !event.shiftKey) {
       event.preventDefault();
@@ -512,6 +696,11 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       this.setTool('fill');
       return;
     }
+    if (key === 's') {
+      event.preventDefault();
+      this.setTool('select');
+      return;
+    }
 
     if (key === 'l') {
       event.preventDefault();
@@ -528,6 +717,14 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     if (key === 'c') {
       event.preventDefault();
       this.setTool('circle');
+      return;
+    }
+  }
+
+  @HostListener('window:keyup', ['$event'])
+  onKeyUp(event: KeyboardEvent) {
+    if (event.key === 'Shift') {
+      this.constrainShape = false;
     }
   }
 
@@ -579,6 +776,65 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         tool: this.currentTool,
       });
     }
+    if (tool !== 'select') {
+      this.selectedShapeId = null;
+      this.isDraggingShape = false;
+      this.isResizingShape = false;
+      this.dragOffset = null;
+      this.resizeHandle = null;
+      this.selectionDirty = false;
+    }
+  }
+
+  addLayer() {
+    const nextIndex = this.layers.length + 1;
+    const id = `layer-${Date.now()}`;
+    const layer: Layer = { id, name: `Layer ${nextIndex}`, visible: true };
+    this.layers = [layer, ...this.layers];
+    this.activeLayerId = id;
+    this.emitLayers();
+    this.redrawAll();
+  }
+
+  selectLayer(id: string) {
+    this.activeLayerId = id;
+  }
+
+  toggleLayerVisibility(id: string) {
+    this.layers = this.layers.map((l) =>
+      l.id === id ? { ...l, visible: !l.visible } : l,
+    );
+    this.emitLayers();
+    this.redrawAll();
+  }
+
+  deleteLayer(id: string) {
+    if (this.layers.length <= 1) return;
+    const layer = this.layers.find((l) => l.id === id);
+    if (!layer) return;
+    const target = this.layers.find((l) => l.id !== id) ?? this.layers[0];
+    this.strokes = this.strokes.map((s) =>
+      s.layerId === id ? { ...s, layerId: target.id } : s,
+    );
+    this.layers = this.layers.filter((l) => l.id !== id);
+    if (this.activeLayerId === id) {
+      this.activeLayerId = target.id;
+    }
+    this.emitLayers();
+    this.redrawAll();
+  }
+
+  moveLayer(id: string, direction: 'up' | 'down') {
+    const idx = this.layers.findIndex((l) => l.id === id);
+    if (idx < 0) return;
+    const target = direction === 'up' ? idx - 1 : idx + 1;
+    if (target < 0 || target >= this.layers.length) return;
+    const copy = [...this.layers];
+    const [layer] = copy.splice(idx, 1);
+    copy.splice(target, 0, layer);
+    this.layers = copy;
+    this.emitLayers();
+    this.redrawAll();
   }
 
   setColor(color: string) {
@@ -594,7 +850,21 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     if (!this.userId || this.undoStack.length === 0) return;
     const group = this.undoStack.pop()!;
     this.redoStack.push(group);
-    const strokeId = group[0]?.strokeId;
+    const first = group[0];
+    if (first?.type === 'update') {
+      const idx = this.strokes.findIndex(
+        (s) => s.type === 'shape' && s.id === first.targetId,
+      );
+      if (idx >= 0) {
+        this.strokes[idx] = this.cloneShape(first.before);
+        this.redrawAll();
+        this.socketService.emit('shape:update', {
+          ...first.before,
+        });
+      }
+      return;
+    }
+    const strokeId = (first as DrawItem)?.strokeId;
     if (!strokeId) return;
     this.strokes = this.strokes.filter((s) => s.strokeId !== strokeId);
     this.redrawAll();
@@ -606,9 +876,23 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     if (!this.userId || this.redoStack.length === 0) return;
     const group = this.redoStack.pop()!;
     this.undoStack.push(group);
-    this.strokes.push(...group);
+    const first = group[0];
+    if (first?.type === 'update') {
+      const idx = this.strokes.findIndex(
+        (s) => s.type === 'shape' && s.id === first.targetId,
+      );
+      if (idx >= 0) {
+        this.strokes[idx] = this.cloneShape(first.after);
+        this.redrawAll();
+        this.socketService.emit('shape:update', {
+          ...first.after,
+        });
+      }
+      return;
+    }
+    this.strokes.push(...(group as DrawItem[]));
     this.redrawAll();
-    const strokeId = group[0]?.strokeId;
+    const strokeId = (first as DrawItem)?.strokeId;
     if (!strokeId) return;
     this.socketService.emit('redo', { boardId: this.boardId, strokeId, strokes: group });
     this.boardVersion += 1;
@@ -617,6 +901,46 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   hasApprovedClear() {
     const uid = this.userId ?? -1;
     return !!this.clearStatus?.approvers?.includes(uid);
+  }
+
+  exportPng() {
+    const canvas = this.canvasRef.nativeElement;
+    const temp = document.createElement('canvas');
+    temp.width = canvas.width;
+    temp.height = canvas.height;
+    const ctx = temp.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(canvas, 0, 0);
+    // Exclude cursors from export
+    // ctx.drawImage(cursorCanvas, 0, 0);
+    const dataUrl = temp.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = `board-${this.boardId}.png`;
+    a.click();
+  }
+
+  async copyShareLink() {
+    const url = window.location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+      this.shareCopied = true;
+      setTimeout(() => {
+        this.shareCopied = false;
+      }, 1500);
+    } catch {
+      // fallback
+      const input = document.createElement('input');
+      input.value = url;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      document.body.removeChild(input);
+      this.shareCopied = true;
+      setTimeout(() => {
+        this.shareCopied = false;
+      }, 1500);
+    }
   }
 
   private applyStrokeStyle(stroke: { color?: string; lineWidth?: number; tool?: string }) {
@@ -674,6 +998,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         color: data.color ?? '#000000',
         lineWidth: data.lineWidth ?? 2,
         tool: 'brush',
+        layerId: typeof data?.layerId === 'string' ? data.layerId : this.activeLayerId,
       };
     }
     if (type === 'fill') {
@@ -687,6 +1012,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         color: data.color ?? '#000000',
         tolerance: data.tolerance ?? 16,
         tool: 'fill',
+        layerId: typeof data?.layerId === 'string' ? data.layerId : this.activeLayerId,
       };
     }
     return {
@@ -701,6 +1027,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       color: data.color ?? '#000000',
       lineWidth: data.lineWidth ?? 2,
       tool: (data.tool ?? 'brush') as Tool,
+      layerId: typeof data?.layerId === 'string' ? data.layerId : this.activeLayerId,
     };
   }
 
@@ -750,6 +1077,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         return 'C';
       case 'fill':
         return 'F';
+      case 'select':
+        return 'S';
       default:
         return 'B';
     }
@@ -780,6 +1109,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       color: this.currentColor,
       lineWidth: this.lineWidth,
       tool: 'brush',
+      layerId: this.activeLayerId,
     };
   }
 
@@ -804,6 +1134,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       color: this.currentColor,
       lineWidth: this.lineWidth,
       tool: 'brush',
+      layerId: this.activeLayerId,
     };
   }
 
@@ -845,6 +1176,215 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     }
 
     ctx.restore();
+  }
+
+  private drawSelectionOverlay() {
+    if (!this.selectedShapeId) return;
+    const shape =
+      this.selectedShapePreview ??
+      (this.strokes.find(
+        (s) => s.type === 'shape' && s.id === this.selectedShapeId,
+      ) as ShapeItem | undefined);
+    if (!shape) return;
+    if (!this.isLayerVisible(shape.layerId)) return;
+
+    const bounds = this.getShapeBounds(shape);
+    this.cursorCtx.save();
+    this.cursorCtx.strokeStyle = '#1a73e8';
+    this.cursorCtx.lineWidth = 1;
+    this.cursorCtx.setLineDash([4, 3]);
+    this.cursorCtx.strokeRect(bounds.x, bounds.y, bounds.w, bounds.h);
+    this.cursorCtx.setLineDash([]);
+    for (const h of this.getResizeHandles(shape)) {
+      this.cursorCtx.fillStyle = '#fff';
+      this.cursorCtx.strokeStyle = '#1a73e8';
+      this.cursorCtx.lineWidth = 1;
+      this.cursorCtx.fillRect(h.x - 4, h.y - 4, 8, 8);
+      this.cursorCtx.strokeRect(h.x - 4, h.y - 4, 8, 8);
+    }
+    this.cursorCtx.restore();
+  }
+
+  private drawBrushPreview() {
+    if (this.lastCursorX === null || this.lastCursorY === null) return;
+    if (this.currentTool !== 'brush' && this.currentTool !== 'eraser' && this.currentTool !== 'fill') return;
+    const r = this.lineWidth;
+    this.cursorCtx.save();
+    this.cursorCtx.beginPath();
+    this.cursorCtx.arc(this.lastCursorX, this.lastCursorY, r, 0, Math.PI * 2);
+    this.cursorCtx.lineWidth = 1;
+    this.cursorCtx.strokeStyle =
+      this.currentTool === 'eraser' ? 'rgba(120,0,0,0.8)' : 'rgba(0,0,0,0.6)';
+    this.cursorCtx.stroke();
+    if (this.currentTool === 'brush') {
+      this.cursorCtx.fillStyle = this.applyAlpha(this.currentColor, 0.25);
+      this.cursorCtx.fill();
+    }
+    this.cursorCtx.restore();
+  }
+
+  private getShapeBounds(shape: ShapeItem) {
+    const x = Math.min(shape.x1, shape.x2);
+    const y = Math.min(shape.y1, shape.y2);
+    const w = Math.abs(shape.x2 - shape.x1);
+    const h = Math.abs(shape.y2 - shape.y1);
+    return { x, y, w, h };
+  }
+
+  private getResizeHandles(shape: ShapeItem): Array<{ x: number; y: number; handle: ResizeHandle }> {
+    if (shape.shapeType === 'line') {
+      return [
+        { x: shape.x1, y: shape.y1, handle: 'line-start' },
+        { x: shape.x2, y: shape.y2, handle: 'line-end' },
+      ];
+    }
+    const b = this.getShapeBounds(shape);
+    return [
+      { x: b.x, y: b.y, handle: 'nw' },
+      { x: b.x + b.w, y: b.y, handle: 'ne' },
+      { x: b.x, y: b.y + b.h, handle: 'sw' },
+      { x: b.x + b.w, y: b.y + b.h, handle: 'se' },
+    ];
+  }
+
+  private hitTestShape(x: number, y: number): { shape: ShapeItem; handle: ResizeHandle | null } | null {
+    const orderedLayers = [...this.layers];
+    for (const layer of orderedLayers) {
+      if (!layer.visible) continue;
+      for (let i = this.strokes.length - 1; i >= 0; i -= 1) {
+        const item = this.strokes[i];
+        if (item.type !== 'shape') continue;
+        const shape = item as ShapeItem;
+        if (shape.layerId !== layer.id) continue;
+        for (const h of this.getResizeHandles(shape)) {
+          if (Math.abs(x - h.x) <= 6 && Math.abs(y - h.y) <= 6) {
+            return { shape, handle: h.handle };
+          }
+        }
+        if (this.isPointInShape(shape, x, y)) {
+          return { shape, handle: null };
+        }
+      }
+    }
+    return null;
+  }
+
+  private isPointInShape(shape: ShapeItem, x: number, y: number) {
+    if (shape.shapeType === 'line') {
+      return this.distanceToSegment(x, y, shape.x1, shape.y1, shape.x2, shape.y2) <= 6;
+    }
+    const b = this.getShapeBounds(shape);
+    if (shape.shapeType === 'rect') {
+      return x >= b.x && y >= b.y && x <= b.x + b.w && y <= b.y + b.h;
+    }
+    const cx = (shape.x1 + shape.x2) / 2;
+    const cy = (shape.y1 + shape.y2) / 2;
+    const rx = Math.abs(shape.x2 - shape.x1) / 2;
+    const ry = Math.abs(shape.y2 - shape.y1) / 2;
+    if (rx === 0 || ry === 0) return false;
+    const dx = (x - cx) / rx;
+    const dy = (y - cy) / ry;
+    return dx * dx + dy * dy <= 1;
+  }
+
+  private distanceToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    if (dx === 0 && dy === 0) return Math.hypot(px - x1, py - y1);
+    const t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy);
+    const clamped = Math.max(0, Math.min(1, t));
+    const cx = x1 + clamped * dx;
+    const cy = y1 + clamped * dy;
+    return Math.hypot(px - cx, py - cy);
+  }
+
+  private applyResize(shape: ShapeItem, handle: ResizeHandle, x: number, y: number) {
+    if (handle === 'line-start') {
+      shape.x1 = x;
+      shape.y1 = y;
+      return;
+    }
+    if (handle === 'line-end') {
+      shape.x2 = x;
+      shape.y2 = y;
+      return;
+    }
+    if (handle === 'nw') {
+      shape.x1 = x;
+      shape.y1 = y;
+    } else if (handle === 'ne') {
+      shape.x2 = x;
+      shape.y1 = y;
+    } else if (handle === 'sw') {
+      shape.x1 = x;
+      shape.y2 = y;
+    } else if (handle === 'se') {
+      shape.x2 = x;
+      shape.y2 = y;
+    }
+  }
+
+  private getLiveShapePreview(): ShapeItem | null {
+    if (!this.isShapeTool(this.currentTool)) return null;
+    if (!this.drawing || !this.shapeStart) return null;
+    if (this.lastCursorX === null || this.lastCursorY === null) return null;
+    const adjusted = this.applyConstrain(
+      this.currentTool,
+      this.shapeStart.x,
+      this.shapeStart.y,
+      this.lastCursorX,
+      this.lastCursorY,
+    );
+    return this.createPreviewShape(
+      this.currentTool,
+      this.shapeStart.x,
+      this.shapeStart.y,
+      adjusted.x2,
+      adjusted.y2,
+    );
+  }
+
+  private applyConstrain(
+    tool: Tool,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+  ) {
+    if (!this.constrainShape) return { x2, y2 };
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    if (tool === 'rect' || tool === 'circle') {
+      const size = Math.max(Math.abs(dx), Math.abs(dy));
+      return {
+        x2: x1 + Math.sign(dx || 1) * size,
+        y2: y1 + Math.sign(dy || 1) * size,
+      };
+    }
+    if (tool === 'line') {
+      const angle = Math.atan2(dy, dx);
+      const step = Math.PI / 4; // 45deg
+      const snapped = Math.round(angle / step) * step;
+      const len = Math.hypot(dx, dy);
+      return {
+        x2: x1 + Math.cos(snapped) * len,
+        y2: y1 + Math.sin(snapped) * len,
+      };
+    }
+    return { x2, y2 };
+  }
+
+  isLayerVisible(layerId: string) {
+    const layer = this.layers.find((l) => l.id === layerId);
+    return layer ? layer.visible : true;
+  }
+
+  private emitLayers() {
+    this.socketService.emit('layers:set', { layers: this.layers });
+  }
+
+  private cloneShape(shape: ShapeItem): ShapeItem {
+    return { ...shape };
   }
 
   private applyFill(fill: FillItem) {
@@ -931,7 +1471,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   }
 }
 
-type Tool = 'brush' | 'eraser' | 'line' | 'rect' | 'circle' | 'fill';
+type Tool = 'brush' | 'eraser' | 'line' | 'rect' | 'circle' | 'fill' | 'select';
 
 interface StrokeItem {
   id: string;
@@ -945,6 +1485,7 @@ interface StrokeItem {
   color: string;
   lineWidth: number;
   tool: Tool;
+  layerId: string;
 }
 
 interface ShapeItem {
@@ -960,6 +1501,7 @@ interface ShapeItem {
   color: string;
   lineWidth: number;
   tool: 'brush';
+  layerId: string;
 }
 
 interface FillItem {
@@ -972,6 +1514,24 @@ interface FillItem {
   color: string;
   tolerance: number;
   tool: 'fill';
+  layerId: string;
 }
 
 type DrawItem = StrokeItem | ShapeItem | FillItem;
+
+interface Layer {
+  id: string;
+  name: string;
+  visible: boolean;
+}
+
+interface ShapeUpdateAction {
+  type: 'update';
+  targetId: string;
+  before: ShapeItem;
+  after: ShapeItem;
+}
+
+type DrawAction = DrawItem | ShapeUpdateAction;
+
+type ResizeHandle = 'nw' | 'ne' | 'sw' | 'se' | 'line-start' | 'line-end';

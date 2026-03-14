@@ -7,6 +7,60 @@
       </span>
     </div>
   </div>
+  <div class="layers">
+    <div class="layers-header">
+      <span>Layers</span>
+      <button type="button" class="tool-button small" (click)="addLayer()">+ Add</button>
+    </div>
+    <div class="layers-list">
+      <div
+        class="layer-row"
+        *ngFor="let layer of layers; let i = index"
+        [class.active]="layer.id === activeLayerId"
+        (click)="selectLayer(layer.id)"
+      >
+        <button
+          type="button"
+          class="layer-visibility"
+          (click)="$event.stopPropagation(); toggleLayerVisibility(layer.id)"
+          [attr.aria-label]="layer.visible ? 'Hide layer' : 'Show layer'"
+        >
+          {{ layer.visible ? 'Show' : 'Hide' }}
+        </button>
+        <span class="layer-name">{{ layer.name }}</span>
+        <span class="layer-badge" *ngIf="!layer.visible">Hidden</span>
+        <div class="layer-actions">
+          <button
+            type="button"
+            class="tool-button small"
+            (click)="$event.stopPropagation(); moveLayer(layer.id, 'up')"
+            [disabled]="i === 0"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            class="tool-button small"
+            (click)="$event.stopPropagation(); moveLayer(layer.id, 'down')"
+            [disabled]="i === layers.length - 1"
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            class="tool-button small danger"
+            (click)="$event.stopPropagation(); deleteLayer(layer.id)"
+            [disabled]="layers.length <= 1"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="connection" [class.offline]="connectionStatus !== 'online'">
+    {{ connectionStatus === 'online' ? 'Synced' : connectionStatus === 'reconnecting' ? 'Reconnecting…' : 'Offline' }}
+  </div>
   <div class="tool-group">
     <button
       type="button"
@@ -15,6 +69,14 @@
       (click)="setTool('brush')"
     >
       Brush
+    </button>
+    <button
+      type="button"
+      class="tool-button"
+      [class.active]="currentTool === 'select'"
+      (click)="setTool('select')"
+    >
+      Select Shape
     </button>
     <button
       type="button"
@@ -65,6 +127,12 @@
     </button>
     <button type="button" class="tool-button" (click)="redo()" [disabled]="!redoStack.length">
       Redo
+    </button>
+  </div>
+  <div class="tool-group">
+    <button type="button" class="tool-button" (click)="exportPng()">Export PNG</button>
+    <button type="button" class="tool-button" (click)="copyShareLink()">
+      {{ shareCopied ? 'Link Copied' : 'Copy Share Link' }}
     </button>
   </div>
   <div class="color-block">
@@ -121,7 +189,7 @@
 
   <div class="tool-group">
     <button (click)="clearBoard()" [disabled]="hasApprovedClear()">
-      Request Clear
+      {{ presenceUsers.length > 1 ? 'Request Clear' : 'Clear Board' }}
     </button>
     <span class="clear-status" *ngIf="clearStatus">
       {{ clearStatus.approvals }}/{{ clearStatus.required }}
@@ -136,11 +204,18 @@
     width="800"
     height="600"
     style="border: 1px solid black;"
+    [style.cursor]="currentTool === 'select' ? 'default' : (currentTool === 'brush' || currentTool === 'eraser' || currentTool === 'fill' ? 'none' : 'crosshair')"
     (mousedown)="onMouseDown($event)"
     (mousemove)="onMouseMove($event)"
     (mouseup)="stopDrawing()"
     (mouseleave)="stopDrawing()"
   ></canvas>
+  <div
+    class="draw-blocked"
+    *ngIf="!isLayerVisible(activeLayerId)"
+  >
+    Active layer is hidden — drawing disabled
+  </div>
 
   <!-- Cursor canvas -->
   <canvas

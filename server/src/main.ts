@@ -7,6 +7,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.setGlobalPrefix('api');
+  // Redirect root to API prefix for a friendly default URL.
+  app.getHttpAdapter().get('/', (_req: any, res: any) => {
+    res.redirect('/api');
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }),
