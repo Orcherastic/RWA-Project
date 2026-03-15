@@ -41,7 +41,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     expiresAt: number | null;
   } | null = null;
   connectionStatus: 'online' | 'reconnecting' | 'offline' = 'offline';
-  layers: Layer[] = [{ id: 'layer-1', name: 'Layer 1', visible: true }];
+  boardOwnerId: number | null = null;
+  layers: Layer[] = [{ id: 'layer-1', name: 'Layer 1', visible: true, ownerId: -1, locked: false }];
   activeLayerId = 'layer-1';
   editingLayerId: string | null = null;
   layerNameDraft = '';
@@ -90,6 +91,10 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   private selectionDirty = false;
   private selectedShapePreview: ShapeItem | null = null;
   private selectedShapeOriginal: ShapeItem | null = null;
+  private layerCanvases = new Map<string, HTMLCanvasElement>();
+  private layerContexts = new Map<string, CanvasRenderingContext2D>();
+  private dirtyLayers = new Set<string>();
+  private redrawScheduled = false;
 
   constructor(
     private readonly route: ActivatedRoute,
@@ -119,25 +124,37 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       })
     );
     this.subscriptions.push(
-      this.socketService.listen('board:state').subscribe(({ strokes, layers, version }) => {
+      this.socketService.listen('board:state').subscribe(({ strokes, layers, version, ownerId }) => {
         this.strokes = Array.isArray(strokes)
           ? strokes.map((s, idx) => this.normalizeStroke(s, idx))
           : [];
+        this.boardOwnerId = typeof ownerId === 'number' ? ownerId : this.boardOwnerId;
         if (Array.isArray(layers) && layers.length > 0) {
           this.layers = layers.map((l) => ({
             id: l.id,
             name: l.name,
             visible: l.visible !== false,
+            ownerId: typeof l.ownerId === 'number' ? l.ownerId : -1,
+            locked: l.locked === true,
           }));
           if (!this.layers.find((l) => l.id === this.activeLayerId)) {
             this.activeLayerId = this.layers[0].id;
+          }
+          const keep = new Set(this.layers.map((l) => l.id));
+          for (const key of this.layerCanvases.keys()) {
+            if (!keep.has(key)) {
+              this.layerCanvases.delete(key);
+              this.layerContexts.delete(key);
+              this.dirtyLayers.delete(key);
+            }
           }
         }
         this.undoStack = [];
         this.redoStack = [];
         this.boardLoaded = true;
         this.boardVersion = typeof version === 'number' ? version : 0;
-        this.redrawAll();
+        this.markAllLayersDirty();
+        this.requestRedraw();
       })
     );
 
@@ -174,11 +191,13 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.socketService.listen('undo').subscribe(({ strokeId, version }) => {
       if (this.shouldResync(version)) return;
       if (!strokeId) return;
-      const before = this.strokes.length;
+      const removed = this.strokes.filter((s) => s.strokeId === strokeId);
+      if (removed.length === 0) return;
       this.strokes = this.strokes.filter((s) => s.strokeId !== strokeId);
-      if (this.strokes.length !== before) {
-        this.redrawAll();
+      for (const item of removed) {
+        this.dirtyLayers.add(item.layerId);
       }
+      this.requestRedraw();
     });
     this.socketService.listen('clear').subscribe(({ version }) => {
       if (this.shouldResync(version)) return;
@@ -198,7 +217,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       if (idx >= 0) {
         const updated = this.normalizeStroke({ ...data, type: 'shape' }, idx) as ShapeItem;
         this.strokes[idx] = updated;
-        this.redrawAll();
+        this.dirtyLayers.add(updated.layerId);
+        this.requestRedraw();
       }
     });
     this.socketService.listen('presence:update').subscribe(({ users }) => {
@@ -210,11 +230,21 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
           id: l.id,
           name: l.name,
           visible: l.visible !== false,
+          ownerId: typeof l.ownerId === 'number' ? l.ownerId : -1,
+          locked: l.locked === true,
         }));
         if (!this.layers.find((l) => l.id === this.activeLayerId)) {
           this.activeLayerId = this.layers[0].id;
         }
-        this.redrawAll();
+        const keep = new Set(this.layers.map((l) => l.id));
+        for (const key of this.layerCanvases.keys()) {
+          if (!keep.has(key)) {
+            this.layerCanvases.delete(key);
+            this.layerContexts.delete(key);
+            this.dirtyLayers.delete(key);
+          }
+        }
+        this.requestRedraw();
       }
     });
 
@@ -267,34 +297,87 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   private redrawAll() {
     const canvas = this.canvasRef.nativeElement;
+    this.resetComposite();
     this.ctx.clearRect(0, 0, canvas.width, canvas.height);
     const orderedLayers = [...this.layers].reverse();
     for (const layer of orderedLayers) {
       if (!layer.visible) continue;
-      const offscreen = document.createElement('canvas');
-      offscreen.width = canvas.width;
-      offscreen.height = canvas.height;
-      const layerCtx = offscreen.getContext('2d');
+      const layerCanvas = this.getLayerCanvas(layer.id);
+      const layerCtx = this.getLayerContext(layer.id);
       if (!layerCtx) continue;
-
-      for (const stroke of this.strokes) {
-        if (stroke.layerId !== layer.id) continue;
-        if (stroke.type === 'stroke') {
-          this.applyStrokeStyleTo(layerCtx, stroke);
-          layerCtx.beginPath();
-          layerCtx.moveTo(stroke.fromX, stroke.fromY);
-          layerCtx.lineTo(stroke.toX, stroke.toY);
-          layerCtx.stroke();
-          this.resetCompositeTo(layerCtx);
-        } else if (stroke.type === 'shape') {
-          this.drawShape(layerCtx, stroke);
-        } else {
-          this.applyFillOnContext(layerCtx, stroke, offscreen.width, offscreen.height);
-        }
+      if (this.dirtyLayers.has(layer.id)) {
+        this.rebuildLayer(layer.id);
       }
-
-      this.ctx.drawImage(offscreen, 0, 0);
+      this.ctx.drawImage(layerCanvas, 0, 0);
     }
+  }
+
+  private requestRedraw() {
+    if (this.redrawScheduled) return;
+    this.redrawScheduled = true;
+    requestAnimationFrame(() => {
+      this.redrawScheduled = false;
+      this.redrawAll();
+    });
+  }
+
+  private markAllLayersDirty() {
+    for (const layer of this.layers) {
+      this.dirtyLayers.add(layer.id);
+    }
+  }
+
+  private getLayerCanvas(layerId: string) {
+    const canvas = this.canvasRef.nativeElement;
+    let layerCanvas = this.layerCanvases.get(layerId);
+    if (!layerCanvas) {
+      layerCanvas = document.createElement('canvas');
+      layerCanvas.width = canvas.width;
+      layerCanvas.height = canvas.height;
+      this.layerCanvases.set(layerId, layerCanvas);
+      this.dirtyLayers.add(layerId);
+    } else if (layerCanvas.width !== canvas.width || layerCanvas.height !== canvas.height) {
+      layerCanvas.width = canvas.width;
+      layerCanvas.height = canvas.height;
+      this.dirtyLayers.add(layerId);
+    }
+    return layerCanvas;
+  }
+
+  private getLayerContext(layerId: string): CanvasRenderingContext2D | undefined {
+    let ctx = this.layerContexts.get(layerId);
+    if (!ctx) {
+      const canvas = this.getLayerCanvas(layerId);
+      const next = canvas.getContext('2d');
+      if (next) {
+        this.layerContexts.set(layerId, next);
+        ctx = next;
+      }
+    }
+    return ctx;
+  }
+
+  private rebuildLayer(layerId: string) {
+    const layerCanvas = this.getLayerCanvas(layerId);
+    const layerCtx = this.getLayerContext(layerId);
+    if (!layerCtx) return;
+    layerCtx.clearRect(0, 0, layerCanvas.width, layerCanvas.height);
+    for (const stroke of this.strokes) {
+      if (stroke.layerId !== layerId) continue;
+      if (stroke.type === 'stroke') {
+        this.applyStrokeStyleTo(layerCtx, stroke);
+        layerCtx.beginPath();
+        layerCtx.moveTo(stroke.fromX, stroke.fromY);
+        layerCtx.lineTo(stroke.toX, stroke.toY);
+        layerCtx.stroke();
+        this.resetCompositeTo(layerCtx);
+      } else if (stroke.type === 'shape') {
+        this.drawShape(layerCtx, stroke);
+      } else {
+        this.applyFillOnContext(layerCtx, stroke, layerCanvas.width, layerCanvas.height);
+      }
+    }
+    this.dirtyLayers.delete(layerId);
   }
 
   private startCursorRenderLoop() {
@@ -357,7 +440,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   onMouseDown(event: MouseEvent) {
     if (!this.boardLoaded) return;
-    if (!this.isLayerVisible(this.activeLayerId)) return;
+    if (!this.canDrawOnLayer(this.activeLayerId)) return;
     const { x, y, inside } = this.getCanvasCoords(event);
     if (!inside) return;
 
@@ -410,7 +493,12 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       this.strokes.push(fillItem);
       this.undoStack.push([fillItem]);
       this.redoStack = [];
-      this.redrawAll();
+      const layerCtx = this.getLayerContext(this.activeLayerId);
+      const layerCanvas = this.getLayerCanvas(this.activeLayerId);
+      if (layerCtx) {
+        this.applyFillOnContext(layerCtx, fillItem, layerCanvas.width, layerCanvas.height);
+      }
+      this.requestRedraw();
       this.socketService.emit('draw', {
         ...fillItem,
       });
@@ -432,13 +520,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       return;
     }
 
-    this.applyStrokeStyle({
-      color: this.currentColor,
-      lineWidth: this.lineWidth,
-      tool: this.currentTool,
-    });
-    this.ctx.beginPath();
-    this.ctx.moveTo(x, y);
+    // Drawing happens on per-layer caches; compositing is handled in redrawAll.
   }
 
   onMouseMove(event: MouseEvent) {
@@ -514,16 +596,6 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     const segmentId = this.createSegmentId(strokeId);
     const strokeUserId = this.userId ?? -1;
 
-    // Draw locally
-    this.applyStrokeStyle({
-      color: this.currentColor,
-      lineWidth: this.lineWidth,
-      tool: this.currentTool,
-    });
-    this.ctx.lineTo(x, y);
-    this.ctx.stroke();
-    this.resetComposite();
-
     // Save stroke for persistence
     const stroke: DrawItem = {
       id: segmentId,
@@ -544,6 +616,16 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       this.activeStrokeBuffer.push(stroke);
       this.redoStack = [];
     }
+    const layerCtx = this.getLayerContext(this.activeLayerId);
+    if (layerCtx) {
+      this.applyStrokeStyleTo(layerCtx, stroke);
+      layerCtx.beginPath();
+      layerCtx.moveTo(fromX, fromY);
+      layerCtx.lineTo(x, y);
+      layerCtx.stroke();
+      this.resetCompositeTo(layerCtx);
+    }
+    this.requestRedraw();
 
     // Update last position
     this.lastX = x;
@@ -561,6 +643,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       color: this.currentColor,
       lineWidth: this.lineWidth,
       tool: this.currentTool,
+      layerId: this.activeLayerId,
     });
     this.boardVersion += 1;
 
@@ -608,7 +691,11 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         this.strokes.push(shapeItem);
         this.undoStack.push([shapeItem]);
         this.redoStack = [];
-        this.drawShape(this.ctx, shapeItem);
+        const layerCtx = this.getLayerContext(this.activeLayerId);
+        if (layerCtx) {
+          this.drawShape(layerCtx, shapeItem);
+        }
+        this.requestRedraw();
         this.socketService.emit('draw', {
           type: 'shape',
           id: shapeItem.id,
@@ -622,6 +709,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
           color: shapeItem.color,
           lineWidth: shapeItem.lineWidth,
           tool: shapeItem.tool,
+          layerId: shapeItem.layerId,
         });
         this.boardVersion += 1;
       }
@@ -643,7 +731,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
           const before = this.cloneShape(this.selectedShapeOriginal);
           const after = this.cloneShape(this.selectedShapePreview);
           this.strokes[idx] = after;
-          this.redrawAll();
+          this.dirtyLayers.add(after.layerId);
+          this.requestRedraw();
           this.socketService.emit('shape:update', {
             ...after,
           });
@@ -748,27 +837,39 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
     if (data.type === 'stroke') {
       if (this.shouldResync(data.version)) return;
-      this.applyStrokeStyle(data);
-      this.ctx.beginPath();
-      this.ctx.moveTo(data.fromX, data.fromY);
-      this.ctx.lineTo(data.toX, data.toY);
-      this.ctx.stroke();
-      this.resetComposite();
-
-      // STORE REMOTE STROKE
-      this.strokes.push(this.normalizeStroke(data, this.strokes.length));
+      const normalized = this.normalizeStroke(data, this.strokes.length);
+      this.strokes.push(normalized);
+      const layerCtx = this.getLayerContext(normalized.layerId);
+      if (layerCtx && normalized.type === 'stroke') {
+        this.applyStrokeStyleTo(layerCtx, normalized);
+        layerCtx.beginPath();
+        layerCtx.moveTo(normalized.fromX, normalized.fromY);
+        layerCtx.lineTo(normalized.toX, normalized.toY);
+        layerCtx.stroke();
+        this.resetCompositeTo(layerCtx);
+      }
+      this.requestRedraw();
     }
     if (data.type === 'shape') {
       if (this.shouldResync(data.version)) return;
       const shape = this.normalizeStroke(data, this.strokes.length) as ShapeItem;
-      this.drawShape(this.ctx, shape);
       this.strokes.push(shape);
+      const layerCtx = this.getLayerContext(shape.layerId);
+      if (layerCtx) {
+        this.drawShape(layerCtx, shape);
+      }
+      this.requestRedraw();
     }
     if (data.type === 'fill') {
       if (this.shouldResync(data.version)) return;
       const fill = this.normalizeStroke(data, this.strokes.length) as FillItem;
       this.strokes.push(fill);
-      this.redrawAll();
+      const layerCtx = this.getLayerContext(fill.layerId);
+      const layerCanvas = this.getLayerCanvas(fill.layerId);
+      if (layerCtx) {
+        this.applyFillOnContext(layerCtx, fill, layerCanvas.width, layerCanvas.height);
+      }
+      this.requestRedraw();
     }
   }
 
@@ -779,6 +880,9 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   clearLocal() {
     const canvas = this.canvasRef.nativeElement;
     this.ctx.clearRect(0, 0, canvas.width, canvas.height);
+    this.layerCanvases.clear();
+    this.layerContexts.clear();
+    this.dirtyLayers.clear();
   }
 
   setTool(tool: Tool) {
@@ -802,6 +906,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   }
 
   addLayer() {
+    if (this.layers.length >= 10) return;
     this.socketService.emit('layers:add', {});
   }
 
@@ -810,6 +915,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   }
 
   startRenameLayer(layer: Layer) {
+    if (!this.canManageLayer(layer)) return;
     this.editingLayerId = layer.id;
     this.layerNameDraft = layer.name;
     this.layerNameError = '';
@@ -822,6 +928,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   }
 
   saveRenameLayer(layer: Layer) {
+    if (!this.canManageLayer(layer)) return;
     const name = this.layerNameDraft.trim();
     if (!name) {
       this.layerNameError = 'Name required';
@@ -841,19 +948,29 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   toggleLayerVisibility(id: string) {
     const layer = this.layers.find((l) => l.id === id);
     if (!layer) return;
+    if (!this.canManageLayer(layer)) return;
     this.socketService.emit('layers:toggle', { layerId: id, visible: !layer.visible });
+  }
+
+  toggleLayerLock(id: string) {
+    const layer = this.layers.find((l) => l.id === id);
+    if (!layer) return;
+    if (!this.canManageLayer(layer)) return;
+    this.socketService.emit('layers:lock', { layerId: id, locked: !layer.locked });
   }
 
   deleteLayer(id: string) {
     if (this.layers.length <= 1) return;
     const layer = this.layers.find((l) => l.id === id);
     if (!layer) return;
+    if (!this.canManageLayer(layer)) return;
     const ok = window.confirm(`Delete "${layer.name}" and all of its drawings?`);
     if (!ok) return;
     this.socketService.emit('layers:delete', { layerId: id });
   }
 
   moveLayer(id: string, direction: 'up' | 'down') {
+    if (!this.isBoardOwner()) return;
     const idx = this.layers.findIndex((l) => l.id === id);
     if (idx < 0) return;
     const target = direction === 'up' ? idx - 1 : idx + 1;
@@ -863,7 +980,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     copy.splice(target, 0, layer);
     this.layers = copy;
     this.socketService.emit('layers:reorder', { order: this.layers.map((l) => l.id) });
-    this.redrawAll();
+    this.requestRedraw();
   }
 
   setColor(color: string) {
@@ -886,7 +1003,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       );
       if (idx >= 0) {
         this.strokes[idx] = this.cloneShape(first.before);
-        this.redrawAll();
+        this.dirtyLayers.add(first.before.layerId);
+        this.requestRedraw();
         this.socketService.emit('shape:update', {
           ...first.before,
         });
@@ -895,8 +1013,12 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     }
     const strokeId = (first as DrawItem)?.strokeId;
     if (!strokeId) return;
+    const removed = this.strokes.filter((s) => s.strokeId === strokeId);
     this.strokes = this.strokes.filter((s) => s.strokeId !== strokeId);
-    this.redrawAll();
+    for (const item of removed) {
+      this.dirtyLayers.add(item.layerId);
+    }
+    this.requestRedraw();
     this.socketService.emit('undo', { boardId: this.boardId, strokeId });
     this.boardVersion += 1;
   }
@@ -912,15 +1034,37 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       );
       if (idx >= 0) {
         this.strokes[idx] = this.cloneShape(first.after);
-        this.redrawAll();
+        this.dirtyLayers.add(first.after.layerId);
+        this.requestRedraw();
         this.socketService.emit('shape:update', {
           ...first.after,
         });
       }
       return;
     }
-    this.strokes.push(...(group as DrawItem[]));
-    this.redrawAll();
+    const items = group as DrawItem[];
+    this.strokes.push(...items);
+    for (const item of items) {
+      const layerCtx = this.getLayerContext(item.layerId);
+      if (!layerCtx) {
+        this.dirtyLayers.add(item.layerId);
+        continue;
+      }
+      if (item.type === 'stroke') {
+        this.applyStrokeStyleTo(layerCtx, item);
+        layerCtx.beginPath();
+        layerCtx.moveTo(item.fromX, item.fromY);
+        layerCtx.lineTo(item.toX, item.toY);
+        layerCtx.stroke();
+        this.resetCompositeTo(layerCtx);
+      } else if (item.type === 'shape') {
+        this.drawShape(layerCtx, item);
+      } else {
+        const layerCanvas = this.getLayerCanvas(item.layerId);
+        this.applyFillOnContext(layerCtx, item, layerCanvas.width, layerCanvas.height);
+      }
+    }
+    this.requestRedraw();
     const strokeId = (first as DrawItem)?.strokeId;
     if (!strokeId) return;
     this.socketService.emit('redo', { boardId: this.boardId, strokeId, strokes: group });
@@ -1429,6 +1573,35 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     return layer ? layer.visible : true;
   }
 
+  isLayerLocked(layerId: string) {
+    const layer = this.layers.find((l) => l.id === layerId);
+    return layer ? layer.locked : false;
+  }
+
+  isBoardOwner() {
+    return this.userId !== null && this.boardOwnerId === this.userId;
+  }
+
+  isLayerOwner(layer: Layer) {
+    return this.userId !== null && layer.ownerId === this.userId;
+  }
+
+  canManageLayer(layer: Layer) {
+    return this.isLayerOwner(layer) || this.isBoardOwner();
+  }
+
+  canDrawOnLayer(layerId: string) {
+    const layer = this.layers.find((l) => l.id === layerId);
+    if (!layer) return true;
+    if (!layer.visible) return false;
+    if (!layer.locked) return true;
+    return this.userId !== null && layer.ownerId === this.userId;
+  }
+
+  getActiveLayer() {
+    return this.layers.find((l) => l.id === this.activeLayerId) ?? null;
+  }
+
 
   private cloneShape(shape: ShapeItem): ShapeItem {
     return { ...shape };
@@ -1573,6 +1746,8 @@ interface Layer {
   id: string;
   name: string;
   visible: boolean;
+  ownerId: number;
+  locked: boolean;
 }
 
 interface ShapeUpdateAction {

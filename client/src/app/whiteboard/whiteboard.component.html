@@ -10,7 +10,14 @@
   <div class="layers">
     <div class="layers-header">
       <span>Layers</span>
-      <button type="button" class="tool-button small" (click)="addLayer()">+ Add</button>
+      <button
+        type="button"
+        class="tool-button small"
+        (click)="addLayer()"
+        [disabled]="layers.length >= 10"
+      >
+        + Add
+      </button>
     </div>
     <div class="layers-list">
       <div
@@ -24,6 +31,7 @@
           class="layer-visibility"
           (click)="$event.stopPropagation(); toggleLayerVisibility(layer.id)"
           [attr.aria-label]="layer.visible ? 'Hide layer' : 'Show layer'"
+          [disabled]="!canManageLayer(layer)"
         >
           {{ layer.visible ? 'Show' : 'Hide' }}
         </button>
@@ -42,16 +50,26 @@
           type="button"
           class="tool-button small"
           (click)="$event.stopPropagation(); startRenameLayer(layer)"
+          [disabled]="!canManageLayer(layer)"
         >
           Rename
         </button>
         <span class="layer-badge" *ngIf="!layer.visible">Hidden</span>
+        <span class="layer-badge locked" *ngIf="layer.locked">Locked</span>
         <div class="layer-actions">
           <button
             type="button"
             class="tool-button small"
+            (click)="$event.stopPropagation(); toggleLayerLock(layer.id)"
+            [disabled]="!canManageLayer(layer)"
+          >
+            {{ layer.locked ? 'Unlock' : 'Lock' }}
+          </button>
+          <button
+            type="button"
+            class="tool-button small"
             (click)="$event.stopPropagation(); moveLayer(layer.id, 'up')"
-            [disabled]="i === 0"
+            [disabled]="i === 0 || !isBoardOwner()"
           >
             ↑
           </button>
@@ -59,7 +77,7 @@
             type="button"
             class="tool-button small"
             (click)="$event.stopPropagation(); moveLayer(layer.id, 'down')"
-            [disabled]="i === layers.length - 1"
+            [disabled]="i === layers.length - 1 || !isBoardOwner()"
           >
             ↓
           </button>
@@ -67,7 +85,7 @@
             type="button"
             class="tool-button small danger"
             (click)="$event.stopPropagation(); deleteLayer(layer.id)"
-            [disabled]="layers.length <= 1"
+            [disabled]="layers.length <= 1 || !canManageLayer(layer)"
           >
             ✕
           </button>
@@ -232,6 +250,12 @@
     *ngIf="!isLayerVisible(activeLayerId)"
   >
     Active layer is hidden — drawing disabled
+  </div>
+  <div
+    class="draw-blocked"
+    *ngIf="getActiveLayer() && getActiveLayer()!.locked && !isLayerOwner(getActiveLayer()!)"
+  >
+    Active layer is locked — drawing disabled
   </div>
 
   <!-- Cursor canvas -->

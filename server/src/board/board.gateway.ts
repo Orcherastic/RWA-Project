@@ -23,7 +23,17 @@ export class BoardGateway {
   private readonly boardRooms = new Map<string, number>();
   private readonly boardStates = new Map<
     number,
-    { items: any[]; layers: Array<{ id: string; name: string; visible: boolean }> }
+    {
+      items: any[];
+      layers: Array<{
+        id: string;
+        name: string;
+        visible: boolean;
+        ownerId: number;
+        locked: boolean;
+      }>;
+      ownerId: number;
+    }
   >();
   private readonly saveTimers = new Map<number, NodeJS.Timeout>();
   private readonly boardVersions = new Map<number, number>();
@@ -168,7 +178,13 @@ export class BoardGateway {
           strokes = [];
         }
       }
-      const defaultLayer = { id: 'layer-1', name: 'Layer 1', visible: true };
+      const defaultLayer = {
+        id: 'layer-1',
+        name: 'Layer 1',
+        visible: true,
+        ownerId: board.owner.id,
+        locked: false,
+      };
       const normalized = strokes.map((s: any, idx: number) => {
         const id = typeof s?.id === 'string' ? s.id : `legacy-${boardId}-${idx}`;
         const strokeId =
@@ -230,9 +246,16 @@ export class BoardGateway {
               id: typeof l?.id === 'string' ? l.id : `layer-${idx + 1}`,
               name: l?.name ?? `Layer ${idx + 1}`,
               visible: l?.visible !== false,
+              ownerId:
+                typeof l?.ownerId === 'number' ? l.ownerId : board.owner.id,
+              locked: l?.locked === true,
             }))
           : [defaultLayer];
-      this.boardStates.set(boardId, { items: normalized, layers: normalizedLayers });
+      this.boardStates.set(boardId, {
+        items: normalized,
+        layers: normalizedLayers,
+        ownerId: board.owner.id,
+      });
       this.boardVersions.set(boardId, 0);
     }
 
@@ -240,6 +263,7 @@ export class BoardGateway {
       strokes: this.boardStates.get(boardId)?.items ?? [],
       layers: this.boardStates.get(boardId)?.layers ?? [],
       version: this.boardVersions.get(boardId) ?? 0,
+      ownerId: this.boardStates.get(boardId)?.ownerId ?? board.owner.id,
     });
 
     const users = this.getPresenceList(boardId);
@@ -283,6 +307,9 @@ export class BoardGateway {
           : (state.layers[0]?.id ?? 'layer-1');
       const layer = state.layers.find((l) => l.id === layerId);
       if (!layer) return;
+      if (layer.locked && layer.ownerId !== user.id) {
+        return;
+      }
       if (data.type === 'shape') {
         strokes.push({
           id: segmentId,
@@ -589,6 +616,7 @@ export class BoardGateway {
       strokes: this.boardStates.get(boardId)?.items ?? [],
       layers: this.boardStates.get(boardId)?.layers ?? [],
       version: this.boardVersions.get(boardId) ?? 0,
+      ownerId: this.boardStates.get(boardId)?.ownerId ?? null,
     });
   }
 
@@ -628,8 +656,11 @@ export class BoardGateway {
   handleLayerAdd(@ConnectedSocket() client: Socket, @MessageBody() data: { name?: string }) {
     const boardId = this.boardRooms.get(client.id);
     if (!boardId) return;
+    const user = client.data.user;
+    if (!user) return;
     const state = this.boardStates.get(boardId);
     if (!state) return;
+    if (state.layers.length >= 10) return;
     const nextIndex = state.layers.length + 1;
     const baseName = data?.name?.trim() || `Layer ${nextIndex}`;
     const name = this.makeUniqueLayerName(state.layers, baseName);
@@ -638,6 +669,8 @@ export class BoardGateway {
         id: `layer-${Date.now()}`,
         name,
         visible: true,
+        ownerId: user.id,
+        locked: false,
       },
       ...state.layers,
     ];
@@ -657,10 +690,13 @@ export class BoardGateway {
   ) {
     const boardId = this.boardRooms.get(client.id);
     if (!boardId) return;
+    const user = client.data.user;
+    if (!user) return;
     const state = this.boardStates.get(boardId);
     if (!state) return;
     const layer = state.layers.find((l) => l.id === data.layerId);
     if (!layer) return;
+    if (layer.ownerId !== user.id && state.ownerId !== user.id) return;
     const desired = data.name?.trim();
     if (!desired) return;
     const unique = this.makeUniqueLayerName(state.layers, desired, layer.id);
@@ -681,11 +717,38 @@ export class BoardGateway {
   ) {
     const boardId = this.boardRooms.get(client.id);
     if (!boardId) return;
+    const user = client.data.user;
+    if (!user) return;
     const state = this.boardStates.get(boardId);
     if (!state) return;
     const layer = state.layers.find((l) => l.id === data.layerId);
     if (!layer) return;
+    if (layer.ownerId !== user.id && state.ownerId !== user.id) return;
     layer.visible = data.visible !== false;
+    this.boardStates.set(boardId, state);
+    const version = this.bumpVersion(boardId);
+    this.scheduleSave(boardId);
+    this.server.to(`board-${boardId}`).emit('layers:update', {
+      layers: state.layers,
+      version,
+    });
+  }
+
+  @SubscribeMessage('layers:lock')
+  handleLayerLock(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { layerId?: string; locked?: boolean },
+  ) {
+    const boardId = this.boardRooms.get(client.id);
+    if (!boardId) return;
+    const user = client.data.user;
+    if (!user) return;
+    const state = this.boardStates.get(boardId);
+    if (!state) return;
+    const layer = state.layers.find((l) => l.id === data.layerId);
+    if (!layer) return;
+    if (layer.ownerId !== user.id && state.ownerId !== user.id) return;
+    layer.locked = data.locked === true;
     this.boardStates.set(boardId, state);
     const version = this.bumpVersion(boardId);
     this.scheduleSave(boardId);
@@ -702,8 +765,11 @@ export class BoardGateway {
   ) {
     const boardId = this.boardRooms.get(client.id);
     if (!boardId) return;
+    const user = client.data.user;
+    if (!user) return;
     const state = this.boardStates.get(boardId);
     if (!state) return;
+    if (state.ownerId !== user.id) return;
     const order = Array.isArray(data?.order) ? data.order : [];
     if (order.length !== state.layers.length) return;
     const map = new Map(state.layers.map((l) => [l.id, l]));
@@ -726,11 +792,14 @@ export class BoardGateway {
   ) {
     const boardId = this.boardRooms.get(client.id);
     if (!boardId) return;
+    const user = client.data.user;
+    if (!user) return;
     const state = this.boardStates.get(boardId);
     if (!state) return;
     if (state.layers.length <= 1) return;
     const layer = state.layers.find((l) => l.id === data.layerId);
     if (!layer) return;
+    if (layer.ownerId !== user.id && state.ownerId !== user.id) return;
     state.layers = state.layers.filter((l) => l.id !== layer.id);
     state.items = state.items.filter((i) => i.layerId !== layer.id);
     this.boardStates.set(boardId, state);
@@ -744,6 +813,7 @@ export class BoardGateway {
       strokes: state.items,
       layers: state.layers,
       version,
+      ownerId: state.ownerId,
     });
   }
 
@@ -855,6 +925,7 @@ export class BoardGateway {
       strokes: compacted,
       layers: state.layers,
       version,
+      ownerId: state.ownerId,
     });
   }
 }
