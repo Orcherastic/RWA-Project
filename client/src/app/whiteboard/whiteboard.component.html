@@ -27,7 +27,24 @@
         >
           {{ layer.visible ? 'Show' : 'Hide' }}
         </button>
-        <span class="layer-name">{{ layer.name }}</span>
+        <span class="layer-name" *ngIf="editingLayerId !== layer.id">{{ layer.name }}</span>
+        <div class="layer-rename" *ngIf="editingLayerId === layer.id" (click)="$event.stopPropagation()">
+          <input
+            type="text"
+            [ngModel]="layerNameDraft"
+            (ngModelChange)="layerNameDraft = $event"
+          />
+          <button type="button" class="tool-button small" (click)="saveRenameLayer(layer)">Save</button>
+          <button type="button" class="tool-button small" (click)="cancelRenameLayer()">Cancel</button>
+          <span class="layer-error" *ngIf="layerNameError">{{ layerNameError }}</span>
+        </div>
+        <button
+          type="button"
+          class="tool-button small"
+          (click)="$event.stopPropagation(); startRenameLayer(layer)"
+        >
+          Rename
+        </button>
         <span class="layer-badge" *ngIf="!layer.visible">Hidden</span>
         <div class="layer-actions">
           <button

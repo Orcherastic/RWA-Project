@@ -138,6 +138,23 @@ canvas {
   color: #333;
 }
 
+.layer-rename {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.layer-rename input {
+  width: 90px;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+
+.layer-error {
+  font-size: 10px;
+  color: #a53120;
+}
+
 .layer-actions {
   display: flex;
   gap: 4px;

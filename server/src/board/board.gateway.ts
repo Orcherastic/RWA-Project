@@ -21,7 +21,10 @@ export class BoardGateway {
   server: Server;
 
   private readonly boardRooms = new Map<string, number>();
-  private readonly boardStates = new Map<number, { items: any[]; layers: any[] }>();
+  private readonly boardStates = new Map<
+    number,
+    { items: any[]; layers: Array<{ id: string; name: string; visible: boolean }> }
+  >();
   private readonly saveTimers = new Map<number, NodeJS.Timeout>();
   private readonly boardVersions = new Map<number, number>();
   private readonly maxSegments = 5000;
@@ -278,6 +281,8 @@ export class BoardGateway {
         typeof data.layerId === 'string'
           ? data.layerId
           : (state.layers[0]?.id ?? 'layer-1');
+      const layer = state.layers.find((l) => l.id === layerId);
+      if (!layer) return;
       if (data.type === 'shape') {
         strokes.push({
           id: segmentId,
@@ -619,19 +624,23 @@ export class BoardGateway {
   }
 
   // LAYERS
-  @SubscribeMessage('layers:set')
-  handleLayersSet(@ConnectedSocket() client: Socket, @MessageBody() data: { layers?: any[] }) {
+  @SubscribeMessage('layers:add')
+  handleLayerAdd(@ConnectedSocket() client: Socket, @MessageBody() data: { name?: string }) {
     const boardId = this.boardRooms.get(client.id);
     if (!boardId) return;
     const state = this.boardStates.get(boardId);
     if (!state) return;
-    const layers = Array.isArray(data?.layers) ? data.layers : [];
-    if (layers.length === 0) return;
-    state.layers = layers.map((l: any, idx: number) => ({
-      id: typeof l?.id === 'string' ? l.id : `layer-${idx + 1}`,
-      name: l?.name ?? `Layer ${idx + 1}`,
-      visible: l?.visible !== false,
-    }));
+    const nextIndex = state.layers.length + 1;
+    const baseName = data?.name?.trim() || `Layer ${nextIndex}`;
+    const name = this.makeUniqueLayerName(state.layers, baseName);
+    state.layers = [
+      {
+        id: `layer-${Date.now()}`,
+        name,
+        visible: true,
+      },
+      ...state.layers,
+    ];
     this.boardStates.set(boardId, state);
     const version = this.bumpVersion(boardId);
     this.scheduleSave(boardId);
@@ -639,6 +648,122 @@ export class BoardGateway {
       layers: state.layers,
       version,
     });
+  }
+
+  @SubscribeMessage('layers:rename')
+  handleLayerRename(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { layerId?: string; name?: string },
+  ) {
+    const boardId = this.boardRooms.get(client.id);
+    if (!boardId) return;
+    const state = this.boardStates.get(boardId);
+    if (!state) return;
+    const layer = state.layers.find((l) => l.id === data.layerId);
+    if (!layer) return;
+    const desired = data.name?.trim();
+    if (!desired) return;
+    const unique = this.makeUniqueLayerName(state.layers, desired, layer.id);
+    layer.name = unique;
+    this.boardStates.set(boardId, state);
+    const version = this.bumpVersion(boardId);
+    this.scheduleSave(boardId);
+    this.server.to(`board-${boardId}`).emit('layers:update', {
+      layers: state.layers,
+      version,
+    });
+  }
+
+  @SubscribeMessage('layers:toggle')
+  handleLayerToggle(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { layerId?: string; visible?: boolean },
+  ) {
+    const boardId = this.boardRooms.get(client.id);
+    if (!boardId) return;
+    const state = this.boardStates.get(boardId);
+    if (!state) return;
+    const layer = state.layers.find((l) => l.id === data.layerId);
+    if (!layer) return;
+    layer.visible = data.visible !== false;
+    this.boardStates.set(boardId, state);
+    const version = this.bumpVersion(boardId);
+    this.scheduleSave(boardId);
+    this.server.to(`board-${boardId}`).emit('layers:update', {
+      layers: state.layers,
+      version,
+    });
+  }
+
+  @SubscribeMessage('layers:reorder')
+  handleLayerReorder(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { order?: string[] },
+  ) {
+    const boardId = this.boardRooms.get(client.id);
+    if (!boardId) return;
+    const state = this.boardStates.get(boardId);
+    if (!state) return;
+    const order = Array.isArray(data?.order) ? data.order : [];
+    if (order.length !== state.layers.length) return;
+    const map = new Map(state.layers.map((l) => [l.id, l]));
+    const reordered = order.map((id) => map.get(id)).filter(Boolean) as typeof state.layers;
+    if (reordered.length !== state.layers.length) return;
+    state.layers = reordered;
+    this.boardStates.set(boardId, state);
+    const version = this.bumpVersion(boardId);
+    this.scheduleSave(boardId);
+    this.server.to(`board-${boardId}`).emit('layers:update', {
+      layers: state.layers,
+      version,
+    });
+  }
+
+  @SubscribeMessage('layers:delete')
+  handleLayerDelete(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { layerId?: string },
+  ) {
+    const boardId = this.boardRooms.get(client.id);
+    if (!boardId) return;
+    const state = this.boardStates.get(boardId);
+    if (!state) return;
+    if (state.layers.length <= 1) return;
+    const layer = state.layers.find((l) => l.id === data.layerId);
+    if (!layer) return;
+    state.layers = state.layers.filter((l) => l.id !== layer.id);
+    state.items = state.items.filter((i) => i.layerId !== layer.id);
+    this.boardStates.set(boardId, state);
+    const version = this.bumpVersion(boardId);
+    this.scheduleSave(boardId);
+    this.server.to(`board-${boardId}`).emit('layers:update', {
+      layers: state.layers,
+      version,
+    });
+    this.server.to(`board-${boardId}`).emit('board:state', {
+      strokes: state.items,
+      layers: state.layers,
+      version,
+    });
+  }
+
+  private makeUniqueLayerName(
+    layers: Array<{ id: string; name: string }>,
+    desired: string,
+    ignoreId?: string,
+  ) {
+    const exists = (name: string) =>
+      layers.some(
+        (l) => l.id !== ignoreId && l.name.trim().toLowerCase() === name.trim().toLowerCase(),
+      );
+    if (!exists(desired)) return desired;
+    let i = 2;
+    let candidate = `${desired} ${i}`;
+    while (exists(candidate)) {
+      i += 1;
+      candidate = `${desired} ${i}`;
+    }
+    return candidate;
   }
 
   private scheduleSave(boardId: number) {

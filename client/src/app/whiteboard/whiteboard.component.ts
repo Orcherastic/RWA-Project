@@ -43,6 +43,9 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   connectionStatus: 'online' | 'reconnecting' | 'offline' = 'offline';
   layers: Layer[] = [{ id: 'layer-1', name: 'Layer 1', visible: true }];
   activeLayerId = 'layer-1';
+  editingLayerId: string | null = null;
+  layerNameDraft = '';
+  layerNameError = '';
   shareCopied = false;
 
   currentColor = '#000000';
@@ -268,21 +271,29 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     const orderedLayers = [...this.layers].reverse();
     for (const layer of orderedLayers) {
       if (!layer.visible) continue;
+      const offscreen = document.createElement('canvas');
+      offscreen.width = canvas.width;
+      offscreen.height = canvas.height;
+      const layerCtx = offscreen.getContext('2d');
+      if (!layerCtx) continue;
+
       for (const stroke of this.strokes) {
         if (stroke.layerId !== layer.id) continue;
         if (stroke.type === 'stroke') {
-          this.applyStrokeStyle(stroke);
-          this.ctx.beginPath();
-          this.ctx.moveTo(stroke.fromX, stroke.fromY);
-          this.ctx.lineTo(stroke.toX, stroke.toY);
-          this.ctx.stroke();
-          this.resetComposite();
+          this.applyStrokeStyleTo(layerCtx, stroke);
+          layerCtx.beginPath();
+          layerCtx.moveTo(stroke.fromX, stroke.fromY);
+          layerCtx.lineTo(stroke.toX, stroke.toY);
+          layerCtx.stroke();
+          this.resetCompositeTo(layerCtx);
         } else if (stroke.type === 'shape') {
-          this.drawShape(this.ctx, stroke);
+          this.drawShape(layerCtx, stroke);
         } else {
-          this.applyFill(stroke);
+          this.applyFillOnContext(layerCtx, stroke, offscreen.width, offscreen.height);
         }
       }
+
+      this.ctx.drawImage(offscreen, 0, 0);
     }
   }
 
@@ -396,10 +407,10 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         tool: 'fill',
         layerId: this.activeLayerId,
       };
-      this.applyFill(fillItem);
       this.strokes.push(fillItem);
       this.undoStack.push([fillItem]);
       this.redoStack = [];
+      this.redrawAll();
       this.socketService.emit('draw', {
         ...fillItem,
       });
@@ -660,6 +671,10 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   @HostListener('window:keydown', ['$event'])
   onKeyDown(event: KeyboardEvent) {
     if (event.defaultPrevented) return;
+    const target = event.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+      return;
+    }
 
     const key = event.key.toLowerCase();
     const ctrlOrMeta = event.ctrlKey || event.metaKey;
@@ -752,8 +767,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     if (data.type === 'fill') {
       if (this.shouldResync(data.version)) return;
       const fill = this.normalizeStroke(data, this.strokes.length) as FillItem;
-      this.applyFill(fill);
       this.strokes.push(fill);
+      this.redrawAll();
     }
   }
 
@@ -787,41 +802,55 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   }
 
   addLayer() {
-    const nextIndex = this.layers.length + 1;
-    const id = `layer-${Date.now()}`;
-    const layer: Layer = { id, name: `Layer ${nextIndex}`, visible: true };
-    this.layers = [layer, ...this.layers];
-    this.activeLayerId = id;
-    this.emitLayers();
-    this.redrawAll();
+    this.socketService.emit('layers:add', {});
   }
 
   selectLayer(id: string) {
     this.activeLayerId = id;
   }
 
-  toggleLayerVisibility(id: string) {
-    this.layers = this.layers.map((l) =>
-      l.id === id ? { ...l, visible: !l.visible } : l,
+  startRenameLayer(layer: Layer) {
+    this.editingLayerId = layer.id;
+    this.layerNameDraft = layer.name;
+    this.layerNameError = '';
+  }
+
+  cancelRenameLayer() {
+    this.editingLayerId = null;
+    this.layerNameDraft = '';
+    this.layerNameError = '';
+  }
+
+  saveRenameLayer(layer: Layer) {
+    const name = this.layerNameDraft.trim();
+    if (!name) {
+      this.layerNameError = 'Name required';
+      return;
+    }
+    const exists = this.layers.some(
+      (l) => l.id !== layer.id && l.name.trim().toLowerCase() === name.toLowerCase(),
     );
-    this.emitLayers();
-    this.redrawAll();
+    if (exists) {
+      this.layerNameError = 'Name already used';
+      return;
+    }
+    this.socketService.emit('layers:rename', { layerId: layer.id, name });
+    this.cancelRenameLayer();
+  }
+
+  toggleLayerVisibility(id: string) {
+    const layer = this.layers.find((l) => l.id === id);
+    if (!layer) return;
+    this.socketService.emit('layers:toggle', { layerId: id, visible: !layer.visible });
   }
 
   deleteLayer(id: string) {
     if (this.layers.length <= 1) return;
     const layer = this.layers.find((l) => l.id === id);
     if (!layer) return;
-    const target = this.layers.find((l) => l.id !== id) ?? this.layers[0];
-    this.strokes = this.strokes.map((s) =>
-      s.layerId === id ? { ...s, layerId: target.id } : s,
-    );
-    this.layers = this.layers.filter((l) => l.id !== id);
-    if (this.activeLayerId === id) {
-      this.activeLayerId = target.id;
-    }
-    this.emitLayers();
-    this.redrawAll();
+    const ok = window.confirm(`Delete "${layer.name}" and all of its drawings?`);
+    if (!ok) return;
+    this.socketService.emit('layers:delete', { layerId: id });
   }
 
   moveLayer(id: string, direction: 'up' | 'down') {
@@ -833,7 +862,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     const [layer] = copy.splice(idx, 1);
     copy.splice(target, 0, layer);
     this.layers = copy;
-    this.emitLayers();
+    this.socketService.emit('layers:reorder', { order: this.layers.map((l) => l.id) });
     this.redrawAll();
   }
 
@@ -959,6 +988,27 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   private resetComposite() {
     this.ctx.globalCompositeOperation = 'source-over';
+  }
+
+  private applyStrokeStyleTo(
+    ctx: CanvasRenderingContext2D,
+    stroke: { color?: string; lineWidth?: number; tool?: string },
+  ) {
+    const tool = stroke.tool ?? 'brush';
+    if (tool === 'eraser') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.strokeStyle = 'rgba(0,0,0,1)';
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = stroke.color ?? this.currentColor;
+    }
+    ctx.lineWidth = stroke.lineWidth ?? this.lineWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+  }
+
+  private resetCompositeTo(ctx: CanvasRenderingContext2D) {
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   private createStrokeId() {
@@ -1379,23 +1429,23 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     return layer ? layer.visible : true;
   }
 
-  private emitLayers() {
-    this.socketService.emit('layers:set', { layers: this.layers });
-  }
 
   private cloneShape(shape: ShapeItem): ShapeItem {
     return { ...shape };
   }
 
-  private applyFill(fill: FillItem) {
-    const canvas = this.canvasRef.nativeElement;
-    const ctx = this.ctx;
-    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const { data, width, height } = img;
+  private applyFillOnContext(
+    ctx: CanvasRenderingContext2D,
+    fill: FillItem,
+    width: number,
+    height: number,
+  ) {
+    const img = ctx.getImageData(0, 0, width, height);
+    const { data, width: w, height: h } = img;
 
     const startX = Math.floor(fill.x);
     const startY = Math.floor(fill.y);
-    if (startX < 0 || startY < 0 || startX >= width || startY >= height) return;
+    if (startX < 0 || startY < 0 || startX >= w || startY >= h) return;
 
     const startIdx = (startY * width + startX) * 4;
     const target: [number, number, number, number] = [
@@ -1411,13 +1461,13 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     if (this.colorMatch(target, fillColor, fill.tolerance)) return;
 
     const stack: Array<[number, number]> = [[startX, startY]];
-    const visited = new Uint8Array(width * height);
+    const visited = new Uint8Array(w * h);
     const tol = fill.tolerance;
 
     while (stack.length) {
       const [x, y] = stack.pop()!;
-      if (x < 0 || y < 0 || x >= width || y >= height) continue;
-      const idx = y * width + x;
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      const idx = y * w + x;
       if (visited[idx]) continue;
       visited[idx] = 1;
 
