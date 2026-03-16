@@ -1,244 +1,177 @@
-<div class="toolbar" style="margin-bottom: 10px; display: flex; gap: 10px; align-items: center;">
-  <div class="presence">
-    <div class="presence-label">Online:</div>
-    <div class="presence-list">
-      <span class="presence-user" *ngFor="let u of presenceUsers">
-        {{ u.displayName }}
-      </span>
+<div class="whiteboard-page">
+<div class="whiteboard-topbar">
+  <div class="topbar-left">
+    <div class="topbar-title">Whiteboard App</div>
+    <div class="connection" [class.offline]="connectionStatus !== 'online'">
+      {{ connectionStatus === 'online' ? 'Synced' : connectionStatus === 'reconnecting' ? 'Reconnecting...' : 'Offline' }}
     </div>
   </div>
-  <div class="layers">
-    <div class="layers-header">
-      <span>Layers</span>
-      <button
-        type="button"
-        class="tool-button small"
-        (click)="addLayer()"
-        [disabled]="layers.length >= 10"
-      >
-        + Add
-      </button>
-    </div>
-    <div class="layers-list">
-      <div
-        class="layer-row"
-        *ngFor="let layer of layers; let i = index"
-        [class.active]="layer.id === activeLayerId"
-        (click)="selectLayer(layer.id)"
-      >
-        <button
-          type="button"
-          class="layer-visibility"
-          (click)="$event.stopPropagation(); toggleLayerVisibility(layer.id)"
-          [attr.aria-label]="layer.visible ? 'Hide layer' : 'Show layer'"
-          [disabled]="!canManageLayer(layer)"
-        >
-          {{ layer.visible ? 'Show' : 'Hide' }}
-        </button>
-        <span class="layer-name" *ngIf="editingLayerId !== layer.id">{{ layer.name }}</span>
-        <div class="layer-rename" *ngIf="editingLayerId === layer.id" (click)="$event.stopPropagation()">
-          <input
-            type="text"
-            [ngModel]="layerNameDraft"
-            (ngModelChange)="layerNameDraft = $event"
-          />
-          <button type="button" class="tool-button small" (click)="saveRenameLayer(layer)">Save</button>
-          <button type="button" class="tool-button small" (click)="cancelRenameLayer()">Cancel</button>
-          <span class="layer-error" *ngIf="layerNameError">{{ layerNameError }}</span>
-        </div>
-        <button
-          type="button"
-          class="tool-button small"
-          (click)="$event.stopPropagation(); startRenameLayer(layer)"
-          [disabled]="!canManageLayer(layer)"
-        >
-          Rename
-        </button>
-        <span class="layer-badge" *ngIf="!layer.visible">Hidden</span>
-        <span class="layer-badge locked" *ngIf="layer.locked">Locked</span>
-        <div class="layer-actions">
-          <button
-            type="button"
-            class="tool-button small"
-            (click)="$event.stopPropagation(); toggleLayerLock(layer.id)"
-            [disabled]="!canManageLayer(layer)"
-          >
-            {{ layer.locked ? 'Unlock' : 'Lock' }}
-          </button>
-          <button
-            type="button"
-            class="tool-button small"
-            (click)="$event.stopPropagation(); moveLayer(layer.id, 'up')"
-            [disabled]="i === 0 || !isBoardOwner()"
-          >
-            ↑
-          </button>
-          <button
-            type="button"
-            class="tool-button small"
-            (click)="$event.stopPropagation(); moveLayer(layer.id, 'down')"
-            [disabled]="i === layers.length - 1 || !isBoardOwner()"
-          >
-            ↓
-          </button>
-          <button
-            type="button"
-            class="tool-button small danger"
-            (click)="$event.stopPropagation(); deleteLayer(layer.id)"
-            [disabled]="layers.length <= 1 || !canManageLayer(layer)"
-          >
-            ✕
-          </button>
-        </div>
+  <div class="topbar-right">
+    <div class="presence">
+      <div class="presence-label">Online:</div>
+      <div class="presence-list">
+        <span class="presence-user" *ngFor="let u of presenceUsers">
+          {{ u.displayName }}
+        </span>
       </div>
     </div>
   </div>
-  <div class="connection" [class.offline]="connectionStatus !== 'online'">
-    {{ connectionStatus === 'online' ? 'Synced' : connectionStatus === 'reconnecting' ? 'Reconnecting…' : 'Offline' }}
-  </div>
-  <div class="tool-group">
-    <button
-      type="button"
-      class="tool-button"
-      [class.active]="currentTool === 'brush'"
-      (click)="setTool('brush')"
-    >
-      Brush
-    </button>
-    <button
-      type="button"
-      class="tool-button"
-      [class.active]="currentTool === 'select'"
-      (click)="setTool('select')"
-    >
-      Select Shape
-    </button>
-    <button
-      type="button"
-      class="tool-button"
-      [class.active]="currentTool === 'eraser'"
-      (click)="setTool('eraser')"
-    >
-      Eraser
-    </button>
-    <button
-      type="button"
-      class="tool-button"
-      [class.active]="currentTool === 'fill'"
-      (click)="setTool('fill')"
-    >
-      Fill
-    </button>
-  </div>
-  <div class="tool-group">
-    <button
-      type="button"
-      class="tool-button"
-      [class.active]="currentTool === 'line'"
-      (click)="setTool('line')"
-    >
-      Line
-    </button>
-    <button
-      type="button"
-      class="tool-button"
-      [class.active]="currentTool === 'rect'"
-      (click)="setTool('rect')"
-    >
-      Rect
-    </button>
-    <button
-      type="button"
-      class="tool-button"
-      [class.active]="currentTool === 'circle'"
-      (click)="setTool('circle')"
-    >
-      Circle
-    </button>
-  </div>
-  <div class="tool-group">
-    <button type="button" class="tool-button" (click)="undo()" [disabled]="!undoStack.length">
-      Undo
-    </button>
-    <button type="button" class="tool-button" (click)="redo()" [disabled]="!redoStack.length">
-      Redo
-    </button>
-  </div>
-  <div class="tool-group">
-    <button type="button" class="tool-button" (click)="exportPng()">Export PNG</button>
-    <button type="button" class="tool-button" (click)="copyShareLink()">
-      {{ shareCopied ? 'Link Copied' : 'Copy Share Link' }}
-    </button>
-  </div>
-  <div class="color-block">
-    <div class="color-header">Colors</div>
-    <div class="color-grid">
-      <button
-        *ngFor="let c of paletteColors"
-        type="button"
-        class="color-swatch"
-        [style.background]="c"
-        [class.active]="currentColor === c"
-        (click)="setColor(c)"
-        [attr.aria-label]="'Color ' + c"
-      ></button>
-    </div>
-    <div class="color-row">
-      <span class="color-label">Recent:</span>
-      <button
-        *ngFor="let c of recentColors"
-        type="button"
-        class="color-swatch small"
-        [style.background]="c"
-        [class.active]="currentColor === c"
-        (click)="setColor(c)"
-        [attr.aria-label]="'Recent color ' + c"
-      ></button>
-      <span class="color-label">Custom:</span>
-      <input
-        type="color"
-        [ngModel]="currentColor"
-        (ngModelChange)="onColorInput($event)"
-        aria-label="Custom color"
-      />
-    </div>
-  </div>
-
-  <label class="line-width">
-    Line width:
-    <input
-      type="range"
-      [ngModel]="lineWidth"
-      (ngModelChange)="lineWidth = +$event"
-      min="1"
-      max="40"
-    />
-    <span class="width-value">{{ lineWidth }}</span>
-    <span
-      class="brush-preview"
-      [style.width.px]="lineWidth * 2"
-      [style.height.px]="lineWidth * 2"
-      [style.background]="currentColor"
-    ></span>
-  </label>
-
-  <div class="tool-group">
-    <button (click)="clearBoard()" [disabled]="hasApprovedClear()">
-      {{ presenceUsers.length > 1 ? 'Request Clear' : 'Clear Board' }}
-    </button>
-    <span class="clear-status" *ngIf="clearStatus">
-      {{ clearStatus.approvals }}/{{ clearStatus.required }}
-    </span>
-  </div>
 </div>
+<div class="whiteboard-layout">
+  <aside class="toolbox">
+    <div class="toolbox-section">
+      <div class="toolbox-title">Tools</div>
+      <div class="tool-stack">
+        <button
+          type="button"
+          class="tool-button"
+          [class.active]="currentTool === 'brush'"
+          (click)="setTool('brush')"
+        >
+          Brush
+        </button>
+        <button
+          type="button"
+          class="tool-button"
+          [class.active]="currentTool === 'select'"
+          (click)="setTool('select')"
+        >
+          Select Shape
+        </button>
+        <button
+          type="button"
+          class="tool-button"
+          [class.active]="currentTool === 'eraser'"
+          (click)="setTool('eraser')"
+        >
+          Eraser
+        </button>
+        <button
+          type="button"
+          class="tool-button"
+          [class.active]="currentTool === 'fill'"
+          (click)="setTool('fill')"
+        >
+          Fill
+        </button>
+        <button
+          type="button"
+          class="tool-button"
+          [class.active]="currentTool === 'line'"
+          (click)="setTool('line')"
+        >
+          Line
+        </button>
+        <button
+          type="button"
+          class="tool-button"
+          [class.active]="currentTool === 'rect'"
+          (click)="setTool('rect')"
+        >
+          Rect
+        </button>
+        <button
+          type="button"
+          class="tool-button"
+          [class.active]="currentTool === 'circle'"
+          (click)="setTool('circle')"
+        >
+          Circle
+        </button>
+      </div>
+    </div>
 
-<div class="board-container" style="position: relative; display: inline-block;">
+    <div class="toolbox-section">
+      <div class="toolbox-title">Actions</div>
+      <div class="tool-stack">
+        <button type="button" class="tool-button" (click)="undo()" [disabled]="!undoStack.length">
+          Undo
+        </button>
+        <button type="button" class="tool-button" (click)="redo()" [disabled]="!redoStack.length">
+          Redo
+        </button>
+        <button type="button" class="tool-button" (click)="exportPng()">Export PNG</button>
+        <button type="button" class="tool-button" (click)="copyShareLink()">
+          {{ shareCopied ? 'Link Copied' : 'Copy Share Link' }}
+        </button>
+        <button type="button" class="tool-button" (click)="toggleGrid()">
+          {{ showGrid ? 'Hide Grid' : 'Show Grid' }}
+        </button>
+        <button class="tool-button danger" (click)="clearBoard()" [disabled]="hasApprovedClear()">
+          {{ presenceUsers.length > 1 ? 'Request Clear' : 'Clear Board' }}
+        </button>
+        <span class="clear-status" *ngIf="clearStatus">
+          {{ clearStatus.approvals }}/{{ clearStatus.required }}
+        </span>
+      </div>
+    </div>
+
+    <div class="toolbox-section">
+      <div class="toolbox-title">Colors</div>
+      <div class="color-block">
+        <div class="color-grid">
+          <button
+            *ngFor="let c of paletteColors"
+            type="button"
+            class="color-swatch"
+            [style.background]="c"
+            [class.active]="currentColor === c"
+            (click)="setColor(c)"
+            [attr.aria-label]="'Color ' + c"
+          ></button>
+        </div>
+        <div class="color-row">
+          <span class="color-label">Recent:</span>
+          <button
+            *ngFor="let c of recentColors"
+            type="button"
+            class="color-swatch small"
+            [style.background]="c"
+            [class.active]="currentColor === c"
+            (click)="setColor(c)"
+            [attr.aria-label]="'Recent color ' + c"
+          ></button>
+          <span class="color-label">Custom:</span>
+          <input
+            type="color"
+            [ngModel]="currentColor"
+            (ngModelChange)="onColorInput($event)"
+            aria-label="Custom color"
+          />
+        </div>
+      </div>
+    </div>
+
+    <div class="toolbox-section">
+      <div class="toolbox-title">Line Width</div>
+      <label class="line-width">
+        <span>Size</span>
+        <input
+          type="range"
+          [ngModel]="lineWidth"
+          (ngModelChange)="lineWidth = +$event"
+          min="1"
+          max="40"
+        />
+        <span class="width-value">{{ lineWidth }}</span>
+        <span
+          class="brush-preview"
+          [style.width.px]="lineWidth * 2"
+          [style.height.px]="lineWidth * 2"
+          [style.background]="currentColor"
+        ></span>
+      </label>
+    </div>
+  </aside>
+
+  <div class="board-and-layers">
+  <div class="board-area">
+    <div class="board-container" #boardWrapper>
   <!-- Drawing canvas -->
   <canvas
     #canvas
-    width="800"
-    height="600"
-    style="border: 1px solid black;"
+    class="draw-canvas"
+    [class.grid-on]="showGrid"
     [style.cursor]="currentTool === 'select' ? 'default' : (currentTool === 'brush' || currentTool === 'eraser' || currentTool === 'fill' ? 'none' : 'crosshair')"
     (mousedown)="onMouseDown($event)"
     (mousemove)="onMouseMove($event)"
@@ -249,20 +182,111 @@
     class="draw-blocked"
     *ngIf="!isLayerVisible(activeLayerId)"
   >
-    Active layer is hidden — drawing disabled
+    Active layer is hidden -- drawing disabled
   </div>
   <div
     class="draw-blocked"
     *ngIf="getActiveLayer() && getActiveLayer()!.locked && !isLayerOwner(getActiveLayer()!)"
   >
-    Active layer is locked — drawing disabled
+    Active layer is locked -- drawing disabled
   </div>
 
   <!-- Cursor canvas -->
   <canvas
     #cursorCanvas
-    width="800"
-    height="600"
-    style="position: absolute; top: 0; left: 0; pointer-events: none;"
+    class="cursor-canvas"
   ></canvas>
+  </div>
+
+  <aside class="layers-panel">
+    <div class="layers">
+      <div class="layers-header">
+        <span>Layers</span>
+        <button
+          type="button"
+          class="tool-button small"
+          (click)="addLayer()"
+          [disabled]="layers.length >= 10"
+        >
+          + Add
+        </button>
+      </div>
+      <div class="layers-list">
+        <div
+          class="layer-row"
+          *ngFor="let layer of layers; let i = index"
+          [class.active]="layer.id === activeLayerId"
+          (click)="selectLayer(layer.id)"
+        >
+          <button
+            type="button"
+            class="layer-visibility"
+            (click)="$event.stopPropagation(); toggleLayerVisibility(layer.id)"
+            [attr.aria-label]="layer.visible ? 'Hide layer' : 'Show layer'"
+            [disabled]="!canManageLayer(layer)"
+          >
+            {{ layer.visible ? 'Show' : 'Hide' }}
+          </button>
+          <span class="layer-name" *ngIf="editingLayerId !== layer.id">{{ layer.name }}</span>
+          <div class="layer-rename" *ngIf="editingLayerId === layer.id" (click)="$event.stopPropagation()">
+            <input
+              type="text"
+              [ngModel]="layerNameDraft"
+              (ngModelChange)="layerNameDraft = $event"
+            />
+            <button type="button" class="tool-button small" (click)="saveRenameLayer(layer)">Save</button>
+            <button type="button" class="tool-button small" (click)="cancelRenameLayer()">Cancel</button>
+            <span class="layer-error" *ngIf="layerNameError">{{ layerNameError }}</span>
+          </div>
+          <button
+            type="button"
+            class="tool-button small"
+            (click)="$event.stopPropagation(); startRenameLayer(layer)"
+            [disabled]="!canManageLayer(layer)"
+          >
+            Rename
+          </button>
+          <span class="layer-badge" *ngIf="!layer.visible">Hidden</span>
+          <span class="layer-badge locked" *ngIf="layer.locked">Locked</span>
+          <div class="layer-actions">
+            <button
+              type="button"
+              class="tool-button small"
+              (click)="$event.stopPropagation(); toggleLayerLock(layer.id)"
+              [disabled]="!canManageLayer(layer)"
+            >
+              {{ layer.locked ? 'Unlock' : 'Lock' }}
+            </button>
+            <button
+              type="button"
+              class="tool-button small"
+              (click)="$event.stopPropagation(); moveLayer(layer.id, 'up')"
+              [disabled]="i === 0 || !isBoardOwner()"
+            >
+              Up
+            </button>
+            <button
+              type="button"
+              class="tool-button small"
+              (click)="$event.stopPropagation(); moveLayer(layer.id, 'down')"
+              [disabled]="i === layers.length - 1 || !isBoardOwner()"
+            >
+              Down
+            </button>
+            <button
+              type="button"
+              class="tool-button small danger"
+              (click)="$event.stopPropagation(); deleteLayer(layer.id)"
+              [disabled]="layers.length <= 1 || !canManageLayer(layer)"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+  </div>
+</div>
+</div>
 </div>

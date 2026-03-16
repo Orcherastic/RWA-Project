@@ -21,6 +21,9 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   @ViewChild('cursorCanvas', { static: true })
   cursorCanvasRef!: ElementRef<HTMLCanvasElement>;
 
+  @ViewChild('boardWrapper', { static: true })
+  boardWrapperRef!: ElementRef<HTMLDivElement>;
+
   private cursorCtx!: CanvasRenderingContext2D;
   private readonly subscriptions: any[] = [];
   private ctx!: CanvasRenderingContext2D;
@@ -48,6 +51,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   layerNameDraft = '';
   layerNameError = '';
   shareCopied = false;
+  showGrid = true;
 
   currentColor = '#000000';
   lineWidth = 2;
@@ -71,6 +75,10 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     '#4682b4',
   ];
   recentColors: string[] = [];
+
+  toggleGrid() {
+    this.showGrid = !this.showGrid;
+  }
 
   private lastX: number | null = null;
   private lastY: number | null = null;
@@ -184,6 +192,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     const canvas = this.canvasRef.nativeElement;
     this.ctx = canvas.getContext('2d')!;
     this.boardId = Number(this.route.snapshot.paramMap.get('id'));
+    this.resizeCanvases();
 
     this.socketService.emit('joinBoard', this.boardId);
 
@@ -293,6 +302,29 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       boardId: this.boardId,
     });
     this.cursorService.clear();
+  }
+
+  @HostListener('window:resize')
+  onResize() {
+    this.resizeCanvases();
+  }
+
+  private resizeCanvases() {
+    const wrapper = this.boardWrapperRef?.nativeElement;
+    const canvas = this.canvasRef?.nativeElement;
+    const cursor = this.cursorCanvasRef?.nativeElement;
+    if (!wrapper || !canvas || !cursor) return;
+
+    const width = Math.max(300, Math.floor(wrapper.clientWidth));
+    const height = Math.max(300, Math.floor(wrapper.clientHeight));
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+      cursor.width = width;
+      cursor.height = height;
+      this.markAllLayersDirty();
+      this.requestRedraw();
+    }
   }
 
   private redrawAll() {

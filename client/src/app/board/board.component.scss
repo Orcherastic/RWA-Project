@@ -1,0 +1,42 @@
+.board-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.board-actions input {
+  min-width: 220px;
+}
+
+.board-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.board-item {
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.board-item input {
+  font-weight: 600;
+}
+
+.board-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.board-buttons .danger {
+  border-color: #f3c7b8;
+  color: #a53120;
+  background: #fff1ee;
+}

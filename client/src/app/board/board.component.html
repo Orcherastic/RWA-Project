@@ -1,14 +1,30 @@
-<h2>Boards</h2>
+<div class="page">
+  <div class="page-header">
+    <div>
+      <h2>Boards</h2>
+      <p class="muted">Create, rename, and share your whiteboards.</p>
+    </div>
+    <div class="board-actions">
+      <input [(ngModel)]="newBoardTitle" placeholder="Board title" />
+      <button
+        class="button primary"
+        (click)="createBoard()"
+        [disabled]="!newBoardTitle.trim()"
+      >
+        Create Board
+      </button>
+    </div>
+  </div>
 
-<input [(ngModel)]="newBoardTitle" placeholder="Board title" />
-<button (click)="createBoard()">Create Board</button>
-
-<div class="board-list">
-  <div *ngFor="let board of boards" class="board-item">
-    <input [(ngModel)]="board.title" />
-    <button (click)="openBoard(board.id)">Open</button>
-    <button (click)="promptShare(board)">Share</button>
-    <button (click)="renameBoard(board, board.title)">Rename</button>
-    <button (click)="deleteBoard(board.id)">Delete</button>
+  <div class="board-list">
+    <div *ngFor="let board of boards" class="board-item">
+      <input [(ngModel)]="board.title" />
+      <div class="board-buttons">
+        <button (click)="openBoard(board.id)">Open</button>
+        <button (click)="promptShare(board)">Share</button>
+        <button (click)="renameBoard(board, board.title)">Rename</button>
+        <button class="danger" (click)="deleteBoard(board)">Delete</button>
+      </div>
+    </div>
   </div>
 </div>

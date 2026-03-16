@@ -9,12 +9,23 @@ import { Router } from '@angular/router';
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
-    <h2>Login</h2>
-    <form (ngSubmit)="submit()">
-      <input [(ngModel)]="email" name="email" placeholder="email" required />
-      <input [(ngModel)]="password" name="password" placeholder="password" type="password" required />
-      <button type="submit">Login</button>
-    </form>
+    <div class="auth-page page">
+      <div class="auth-card">
+        <h2>Login</h2>
+        <p class="auth-subtitle">Welcome back. Pick up where you left off.</p>
+        <form class="form-stack" (ngSubmit)="submit()">
+          <label class="field">
+            <span>Email</span>
+            <input [(ngModel)]="email" name="email" placeholder="you@example.com" required />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input [(ngModel)]="password" name="password" placeholder="••••••••" type="password" required />
+          </label>
+          <button class="button primary" type="submit">Login</button>
+        </form>
+      </div>
+    </div>
   `
 })
 export class LoginComponent {

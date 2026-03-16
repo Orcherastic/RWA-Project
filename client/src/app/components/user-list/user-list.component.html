@@ -1,36 +1,58 @@
-<h2>User List</h2>
+<div class="page">
+  <div class="page-header">
+    <div>
+      <h2>User List</h2>
+      <p class="muted">Manage collaborators and invitations.</p>
+    </div>
+  </div>
 
-<ul>
-  <li *ngFor="let user of users">
-    {{ user.displayName }} ({{ user.email }})
-    <button (click)="editUser(user)">Edit</button>
-    <button (click)="deleteUser(user.id)">Delete</button>
-  </li>
-</ul>
+  <div class="user-grid">
+    <div class="user-card" *ngFor="let user of users">
+      <div class="user-info">
+        <strong>{{ user.displayName }}</strong>
+        <span>{{ user.email }}</span>
+      </div>
+      <div class="user-actions">
+        <button (click)="editUser(user)">Edit</button>
+        <button class="danger" (click)="deleteUser(user.id)">Delete</button>
+      </div>
+    </div>
+  </div>
 
-<h3>Add User</h3>
-<form (ngSubmit)="addUser()">
-  <label for="displayName">Display Name:</label>
-  <input [(ngModel)]="newUser.displayName" name="displayName" required />
+  <div class="user-forms">
+    <div class="form-card">
+      <h3>Add User</h3>
+      <form class="form-stack" (ngSubmit)="addUser()">
+        <label class="field">
+          <span>Display Name</span>
+          <input [(ngModel)]="newUser.displayName" name="displayName" required />
+        </label>
+        <label class="field">
+          <span>Email</span>
+          <input [(ngModel)]="newUser.email" name="email" required />
+        </label>
+        <button class="button primary" type="submit">Add</button>
+      </form>
+    </div>
 
-  <label for="email">Email:</label>
-  <input [(ngModel)]="newUser.email" name="email" required />
+    <div class="form-card" *ngIf="editingUser">
+      <h3>Edit User</h3>
+      <form class="form-stack" (ngSubmit)="saveUser()">
+        <label class="field">
+          <span>Display Name</span>
+          <input [(ngModel)]="editingUser.displayName" name="editDisplayName" required />
+        </label>
+        <label class="field">
+          <span>Email</span>
+          <input [(ngModel)]="editingUser.email" name="editEmail" required />
+        </label>
+        <div class="user-actions">
+          <button class="button primary" type="submit">Save</button>
+          <button type="button" (click)="cancelEdit()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
-  <button type="submit">Add</button>
-</form>
-
-<div *ngIf="editingUser">
-  <h3>Edit User</h3>
-  <form (ngSubmit)="saveUser()">
-    <label for="displayName">Display Name:</label>
-    <input [(ngModel)]="editingUser.displayName" name="editDisplayName" required />
-
-    <label for="email">Email:</label>
-    <input [(ngModel)]="editingUser.email" name="editEmail" required />
-
-    <button type="submit">Save</button>
-    <button type="button" (click)="cancelEdit()">Cancel</button>
-  </form>
+  <p class="muted" *ngIf="users.length === 0">No users found.</p>
 </div>
-
-<p *ngIf="users.length === 0">No users found.</p>
