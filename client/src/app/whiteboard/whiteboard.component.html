@@ -164,7 +164,6 @@
     </div>
   </aside>
 
-  <div class="board-and-layers">
   <div class="board-area">
     <div class="board-container" #boardWrapper>
   <!-- Drawing canvas -->
@@ -198,95 +197,96 @@
   ></canvas>
   </div>
 
-  <aside class="layers-panel">
-    <div class="layers">
-      <div class="layers-header">
-        <span>Layers</span>
-        <button
-          type="button"
-          class="tool-button small"
-          (click)="addLayer()"
-          [disabled]="layers.length >= 10"
-        >
-          + Add
-        </button>
-      </div>
-      <div class="layers-list">
-        <div
-          class="layer-row"
-          *ngFor="let layer of layers; let i = index"
-          [class.active]="layer.id === activeLayerId"
-          (click)="selectLayer(layer.id)"
-        >
-          <button
-            type="button"
-            class="layer-visibility"
-            (click)="$event.stopPropagation(); toggleLayerVisibility(layer.id)"
-            [attr.aria-label]="layer.visible ? 'Hide layer' : 'Show layer'"
-            [disabled]="!canManageLayer(layer)"
-          >
-            {{ layer.visible ? 'Show' : 'Hide' }}
-          </button>
-          <span class="layer-name" *ngIf="editingLayerId !== layer.id">{{ layer.name }}</span>
-          <div class="layer-rename" *ngIf="editingLayerId === layer.id" (click)="$event.stopPropagation()">
-            <input
-              type="text"
-              [ngModel]="layerNameDraft"
-              (ngModelChange)="layerNameDraft = $event"
-            />
-            <button type="button" class="tool-button small" (click)="saveRenameLayer(layer)">Save</button>
-            <button type="button" class="tool-button small" (click)="cancelRenameLayer()">Cancel</button>
-            <span class="layer-error" *ngIf="layerNameError">{{ layerNameError }}</span>
-          </div>
+  <aside class="toolbox toolbox-right">
+    <div class="toolbox-section">
+      <div class="layers">
+        <div class="layers-header">
+          <span>Layers</span>
           <button
             type="button"
             class="tool-button small"
-            (click)="$event.stopPropagation(); startRenameLayer(layer)"
-            [disabled]="!canManageLayer(layer)"
+            (click)="addLayer()"
+            [disabled]="layers.length >= 10"
           >
-            Rename
+            + Add
           </button>
-          <span class="layer-badge" *ngIf="!layer.visible">Hidden</span>
-          <span class="layer-badge locked" *ngIf="layer.locked">Locked</span>
-          <div class="layer-actions">
+        </div>
+        <div class="layers-list">
+          <div
+            class="layer-row"
+            *ngFor="let layer of layers; let i = index"
+            [class.active]="layer.id === activeLayerId"
+            (click)="selectLayer(layer.id)"
+          >
             <button
               type="button"
-              class="tool-button small"
-              (click)="$event.stopPropagation(); toggleLayerLock(layer.id)"
+              class="layer-visibility"
+              (click)="$event.stopPropagation(); toggleLayerVisibility(layer.id)"
+              [attr.aria-label]="layer.visible ? 'Hide layer' : 'Show layer'"
               [disabled]="!canManageLayer(layer)"
             >
-              {{ layer.locked ? 'Unlock' : 'Lock' }}
+              {{ layer.visible ? 'Show' : 'Hide' }}
             </button>
+            <span class="layer-name" *ngIf="editingLayerId !== layer.id">{{ layer.name }}</span>
+            <div class="layer-rename" *ngIf="editingLayerId === layer.id" (click)="$event.stopPropagation()">
+              <input
+                type="text"
+                [ngModel]="layerNameDraft"
+                (ngModelChange)="layerNameDraft = $event"
+              />
+              <button type="button" class="tool-button small" (click)="saveRenameLayer(layer)">Save</button>
+              <button type="button" class="tool-button small" (click)="cancelRenameLayer()">Cancel</button>
+              <span class="layer-error" *ngIf="layerNameError">{{ layerNameError }}</span>
+            </div>
             <button
               type="button"
               class="tool-button small"
-              (click)="$event.stopPropagation(); moveLayer(layer.id, 'up')"
-              [disabled]="i === 0 || !isBoardOwner()"
+              (click)="$event.stopPropagation(); startRenameLayer(layer)"
+              [disabled]="!canManageLayer(layer)"
             >
-              Up
+              Rename
             </button>
-            <button
-              type="button"
-              class="tool-button small"
-              (click)="$event.stopPropagation(); moveLayer(layer.id, 'down')"
-              [disabled]="i === layers.length - 1 || !isBoardOwner()"
-            >
-              Down
-            </button>
-            <button
-              type="button"
-              class="tool-button small danger"
-              (click)="$event.stopPropagation(); deleteLayer(layer.id)"
-              [disabled]="layers.length <= 1 || !canManageLayer(layer)"
-            >
-              Delete
-            </button>
+            <span class="layer-badge" *ngIf="!layer.visible">Hidden</span>
+            <span class="layer-badge locked" *ngIf="layer.locked">Locked</span>
+            <div class="layer-actions">
+              <button
+                type="button"
+                class="tool-button small"
+                (click)="$event.stopPropagation(); toggleLayerLock(layer.id)"
+                [disabled]="!canManageLayer(layer)"
+              >
+                {{ layer.locked ? 'Unlock' : 'Lock' }}
+              </button>
+              <button
+                type="button"
+                class="tool-button small"
+                (click)="$event.stopPropagation(); moveLayer(layer.id, 'up')"
+                [disabled]="i === 0 || !isBoardOwner()"
+              >
+                Up
+              </button>
+              <button
+                type="button"
+                class="tool-button small"
+                (click)="$event.stopPropagation(); moveLayer(layer.id, 'down')"
+                [disabled]="i === layers.length - 1 || !isBoardOwner()"
+              >
+                Down
+              </button>
+              <button
+                type="button"
+                class="tool-button small danger"
+                (click)="$event.stopPropagation(); deleteLayer(layer.id)"
+                [disabled]="layers.length <= 1 || !canManageLayer(layer)"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       </div>
     </div>
   </aside>
-  </div>
 </div>
 </div>
 </div>
