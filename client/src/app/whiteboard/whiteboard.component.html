@@ -19,8 +19,20 @@
 </div>
 <div class="whiteboard-layout">
   <aside class="toolbox">
-    <div class="toolbox-section">
-      <div class="toolbox-title">Tools</div>
+    <div class="toolbox-section tools-section">
+      <div class="toolbox-title main">Tools</div>
+      <div class="toolbox-subtitle">Line Width</div>
+      <label class="line-width">
+        <span>Size</span>
+        <input
+          type="range"
+          [ngModel]="lineWidth"
+          (ngModelChange)="lineWidth = +$event"
+          min="1"
+          max="40"
+        />
+        <span class="width-value">{{ lineWidth }}</span>
+      </label>
       <div class="tool-stack">
         <button
           type="button"
@@ -122,6 +134,8 @@
         </div>
         <div class="color-row">
           <span class="color-label">Recent:</span>
+        </div>
+        <div class="color-row">
           <button
             *ngFor="let c of recentColors"
             type="button"
@@ -131,6 +145,8 @@
             (click)="setColor(c)"
             [attr.aria-label]="'Recent color ' + c"
           ></button>
+        </div>
+        <div class="color-row">
           <span class="color-label">Custom:</span>
           <input
             type="color"
@@ -141,36 +157,14 @@
         </div>
       </div>
     </div>
-
-    <div class="toolbox-section">
-      <div class="toolbox-title">Line Width</div>
-      <label class="line-width">
-        <span>Size</span>
-        <input
-          type="range"
-          [ngModel]="lineWidth"
-          (ngModelChange)="lineWidth = +$event"
-          min="1"
-          max="40"
-        />
-        <span class="width-value">{{ lineWidth }}</span>
-        <span
-          class="brush-preview"
-          [style.width.px]="lineWidth * 2"
-          [style.height.px]="lineWidth * 2"
-          [style.background]="currentColor"
-        ></span>
-      </label>
-    </div>
   </aside>
 
   <div class="board-area">
-    <div class="board-container" #boardWrapper>
+    <div class="board-container" #boardWrapper [class.grid-on]="showGrid">
   <!-- Drawing canvas -->
   <canvas
     #canvas
     class="draw-canvas"
-    [class.grid-on]="showGrid"
     [style.cursor]="currentTool === 'select' ? 'default' : (currentTool === 'brush' || currentTool === 'eraser' || currentTool === 'fill' ? 'none' : 'crosshair')"
     (mousedown)="onMouseDown($event)"
     (mousemove)="onMouseMove($event)"
@@ -196,12 +190,12 @@
     class="cursor-canvas"
   ></canvas>
   </div>
-
-  <aside class="toolbox toolbox-right">
+</div>
+<aside class="toolbox toolbox-right">
     <div class="toolbox-section">
       <div class="layers">
         <div class="layers-header">
-          <span>Layers</span>
+          <span class="layers-title">Layers</span>
           <button
             type="button"
             class="tool-button small"
@@ -287,6 +281,5 @@
       </div>
     </div>
   </aside>
-</div>
 </div>
 </div>

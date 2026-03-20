@@ -26,6 +26,7 @@
 .topbar-title {
   font-family: var(--font-heading);
   font-weight: 700;
+  font-size: 18px;
   color: var(--gray-900);
 }
 
@@ -68,6 +69,7 @@
 .toolbox.toolbox-right {
   border: 1px solid var(--gray-200);
   background: rgba(255, 255, 255, 0.95);
+  border-radius: 12px 0 0 12px;
   //margin-right: -12px;
 }
 
@@ -78,6 +80,28 @@
 }
 
 .toolbox-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gray-500);
+}
+
+.toolbox-title.main {
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: var(--gray-700);
+}
+
+.layers-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gray-700);
+}
+
+.toolbox-subtitle {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -165,10 +189,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 16px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--gray-200);
-  background: var(--gray-25);
+  padding: 4px 0;
   min-width: 220px;
 }
 
@@ -176,9 +197,6 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--gray-700);
 }
 
 .layers-list {
@@ -187,7 +205,7 @@
   gap: 6px;
   max-height: 220px;
   overflow: auto;
-  padding-right: 16px;
+  padding: 0 8px 4px;
 }
 
 .layer-row {
@@ -340,7 +358,8 @@
 }
 
 .line-width {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
@@ -352,18 +371,15 @@
 
 .line-width input[type='range'] {
   accent-color: var(--blue-600);
+  width: 100%;
+  min-width: 0;
+  margin: 0;
 }
 
 .width-value {
   min-width: 24px;
   text-align: right;
   font-variant-numeric: tabular-nums;
-}
-
-.brush-preview {
-  display: inline-block;
-  border-radius: 50%;
-  border: 1px solid var(--gray-700);
 }
 
 .board-container {
@@ -378,10 +394,10 @@
 
 .draw-canvas {
   display: block;
-  background-color: var(--white);
+  background-color: transparent;
 }
 
-.draw-canvas.grid-on {
+.board-container.grid-on {
   background-image:
     linear-gradient(to right, rgba(15, 23, 42, 0.04) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(15, 23, 42, 0.04) 1px, transparent 1px);

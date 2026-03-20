@@ -51,7 +51,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   layerNameDraft = '';
   layerNameError = '';
   shareCopied = false;
-  showGrid = true;
+  showGrid = false;
 
   currentColor = '#000000';
   lineWidth = 2;
