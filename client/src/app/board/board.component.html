@@ -3,6 +3,7 @@
     <div>
       <h2>Boards</h2>
       <p class="muted">Create, rename, and share your whiteboards.</p>
+      <p class="muted">Total: {{ boardCount }} | Owned: {{ ownedBoardsCount }} | Server: {{ serverStatus }}</p>
     </div>
     <div class="board-actions">
       <input [(ngModel)]="newBoardTitle" placeholder="Board title" />
@@ -17,14 +18,13 @@
   </div>
 
   <div class="board-list">
-    <div *ngFor="let board of boards" class="board-item">
-      <input [(ngModel)]="board.title" />
-      <div class="board-buttons">
-        <button (click)="openBoard(board.id)">Open</button>
-        <button (click)="promptShare(board)">Share</button>
-        <button (click)="renameBoard(board, board.title)">Rename</button>
-        <button class="danger" (click)="deleteBoard(board)">Delete</button>
-      </div>
-    </div>
+    <app-board-item
+      *ngFor="let board of boards"
+      [board]="board"
+      (open)="openBoard($event)"
+      (share)="promptShare($event)"
+      (rename)="renameBoard($event.board, $event.title)"
+      (remove)="deleteBoard($event)"
+    ></app-board-item>
   </div>
 </div>

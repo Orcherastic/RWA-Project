@@ -1,0 +1,9 @@
+<div class="board-item">
+  <input [(ngModel)]="board.title" />
+  <div class="board-buttons">
+    <button (click)="onOpen()">Open</button>
+    <button (click)="onShare()">Share</button>
+    <button (click)="onRename()">Rename</button>
+    <button class="danger" (click)="onDelete()">Delete</button>
+  </div>
+</div>

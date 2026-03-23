@@ -7,6 +7,7 @@ import { AuthService } from '../auth/auth.service';
   providedIn: 'root'
 })
 export class BoardService {
+  private readonly apiBase = 'http://localhost:3000/api';
   private readonly apiUrl = 'http://localhost:3000/api/boards';
 
     constructor(
@@ -72,5 +73,11 @@ export class BoardService {
 
   deleteBoard(id: number): Observable<void> {
     return this.http.delete<void>(`${this.apiUrl}/${id}`, this.authOptions());
+  }
+
+  async fetchServerStatus(): Promise<{ ok: boolean; message: string }> {
+    const response = await fetch(this.apiBase);
+    const message = await response.text();
+    return { ok: response.ok, message };
   }
 }
