@@ -170,6 +170,7 @@
     (mousemove)="onMouseMove($event)"
     (mouseup)="stopDrawing()"
     (mouseleave)="stopDrawing()"
+    (contextmenu)="onCanvasContextMenu($event)"
   ></canvas>
   <div
     class="draw-blocked"
@@ -212,16 +213,32 @@
             [class.active]="layer.id === activeLayerId"
             (click)="selectLayer(layer.id)"
           >
-            <button
-              type="button"
-              class="layer-visibility"
-              (click)="$event.stopPropagation(); toggleLayerVisibility(layer.id)"
-              [attr.aria-label]="layer.visible ? 'Hide layer' : 'Show layer'"
-              [disabled]="!canManageLayer(layer)"
-            >
-              {{ layer.visible ? 'Show' : 'Hide' }}
-            </button>
-            <span class="layer-name" *ngIf="editingLayerId !== layer.id">{{ layer.name }}</span>
+            <div class="layer-top-row">
+              <button
+                type="button"
+                class="layer-visibility"
+                (click)="$event.stopPropagation(); toggleLayerVisibility(layer.id)"
+                [attr.aria-label]="layer.visible ? 'Hide layer' : 'Show layer'"
+                [disabled]="!canManageLayer(layer)"
+              >
+                {{ layer.visible ? 'Show' : 'Hide' }}
+              </button>
+              <div class="layer-badges">
+                <span class="layer-badge" *ngIf="!layer.visible">Hidden</span>
+                <span class="layer-badge locked" *ngIf="layer.locked">Locked</span>
+              </div>
+            </div>
+            <div class="layer-name-row" *ngIf="editingLayerId !== layer.id">
+              <span class="layer-name">{{ layer.name }}</span>
+              <button
+                type="button"
+                class="tool-button small"
+                (click)="$event.stopPropagation(); startRenameLayer(layer)"
+                [disabled]="!canManageLayer(layer)"
+              >
+                Rename
+              </button>
+            </div>
             <div class="layer-rename" *ngIf="editingLayerId === layer.id" (click)="$event.stopPropagation()">
               <input
                 type="text"
@@ -232,16 +249,6 @@
               <button type="button" class="tool-button small" (click)="cancelRenameLayer()">Cancel</button>
               <span class="layer-error" *ngIf="layerNameError">{{ layerNameError }}</span>
             </div>
-            <button
-              type="button"
-              class="tool-button small"
-              (click)="$event.stopPropagation(); startRenameLayer(layer)"
-              [disabled]="!canManageLayer(layer)"
-            >
-              Rename
-            </button>
-            <span class="layer-badge" *ngIf="!layer.visible">Hidden</span>
-            <span class="layer-badge locked" *ngIf="layer.locked">Locked</span>
             <div class="layer-actions">
               <button
                 type="button"
@@ -267,6 +274,8 @@
               >
                 Down
               </button>
+            </div>
+            <div class="layer-actions delete-row">
               <button
                 type="button"
                 class="tool-button small danger"

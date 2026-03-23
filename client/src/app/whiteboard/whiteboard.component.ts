@@ -473,6 +473,11 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   onMouseDown(event: MouseEvent) {
     if (!this.boardLoaded) return;
     if (!this.canDrawOnLayer(this.activeLayerId)) return;
+    if (event.button === 2) {
+      this.cancelActiveDrawing();
+      return;
+    }
+    if (event.button !== 0) return;
     const { x, y, inside } = this.getCanvasCoords(event);
     if (!inside) return;
 
@@ -553,6 +558,10 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     }
 
     // Drawing happens on per-layer caches; compositing is handled in redrawAll.
+  }
+
+  onCanvasContextMenu(event: MouseEvent) {
+    event.preventDefault();
   }
 
   onMouseMove(event: MouseEvent) {
@@ -787,6 +796,37 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       this.selectedShapeOriginal = null;
       this.selectedShapePreview = null;
     }
+  }
+
+  private cancelActiveDrawing() {
+    if (!this.drawing) return;
+    if (this.currentTool === 'fill') return;
+
+    this.drawing = false;
+    this.lastX = this.lastY = null;
+
+    if (this.isShapeTool(this.currentTool)) {
+      this.shapeStart = null;
+      this.previewShape = null;
+      this.activeStrokeId = null;
+      return;
+    }
+
+    const strokeId = this.activeStrokeId;
+    this.activeStrokeBuffer = [];
+    this.activeStrokeId = null;
+    if (!strokeId) return;
+
+    const removed = this.strokes.filter((s) => s.strokeId === strokeId);
+    if (removed.length === 0) return;
+
+    this.strokes = this.strokes.filter((s) => s.strokeId !== strokeId);
+    for (const item of removed) {
+      this.dirtyLayers.add(item.layerId);
+    }
+    this.requestRedraw();
+    this.socketService.emit('undo', { boardId: this.boardId, strokeId });
+    this.boardVersion += 1;
   }
 
   @HostListener('window:keydown', ['$event'])
@@ -1390,15 +1430,33 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       const y = Math.min(shape.y1, shape.y2);
       const w = Math.abs(shape.x2 - shape.x1);
       const h = Math.abs(shape.y2 - shape.y1);
-      ctx.strokeRect(x, y, w, h);
+      if (preview) {
+        ctx.strokeRect(x, y, w, h);
+      } else {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x, y, w, h);
+        ctx.clip();
+        ctx.strokeRect(x, y, w, h);
+        ctx.restore();
+      }
     } else {
       const cx = (shape.x1 + shape.x2) / 2;
       const cy = (shape.y1 + shape.y2) / 2;
       const rx = Math.abs(shape.x2 - shape.x1) / 2;
       const ry = Math.abs(shape.y2 - shape.y1) / 2;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-      ctx.stroke();
+      if (preview) {
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        ctx.save();
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.stroke();
+        ctx.restore();
+      }
     }
 
     ctx.restore();
@@ -1434,7 +1492,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   private drawBrushPreview() {
     if (this.lastCursorX === null || this.lastCursorY === null) return;
     if (this.currentTool !== 'brush' && this.currentTool !== 'eraser' && this.currentTool !== 'fill') return;
-    const r = this.lineWidth;
+    const r = this.lineWidth / 2;
     this.cursorCtx.save();
     this.cursorCtx.beginPath();
     this.cursorCtx.arc(this.lastCursorX, this.lastCursorY, r, 0, Math.PI * 2);
@@ -1697,7 +1755,44 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       stack.push([x, y - 1]);
     }
 
+    this.expandFillEdges(data, w, h, fillColor, tol);
     ctx.putImageData(img, 0, 0);
+  }
+
+  private expandFillEdges(
+    data: Uint8ClampedArray,
+    width: number,
+    height: number,
+    fillColor: [number, number, number, number],
+    tolerance: number,
+  ) {
+    const [fr, fg, fb] = fillColor;
+    const edgeAlphaMax = Math.min(200, Math.max(48, tolerance * 4));
+    const copy = new Uint8ClampedArray(data);
+    const isFillAt = (off: number) =>
+      copy[off] === fr && copy[off + 1] === fg && copy[off + 2] === fb && copy[off + 3] === 255;
+
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const off = (y * width + x) * 4;
+        const alpha = copy[off + 3];
+        if (alpha === 0) continue;
+        if (alpha > edgeAlphaMax) continue;
+        if (isFillAt(off)) continue;
+
+        const left = off - 4;
+        const right = off + 4;
+        const up = off - width * 4;
+        const down = off + width * 4;
+        if (isFillAt(left) || isFillAt(right) || isFillAt(up) || isFillAt(down)) {
+          data[off] = fr;
+          data[off + 1] = fg;
+          data[off + 2] = fb;
+          // Keep original alpha to preserve smooth edges.
+          data[off + 3] = alpha;
+        }
+      }
+    }
   }
 
   private hexToRgba(color: string): [number, number, number, number] | null {
@@ -1717,11 +1812,15 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     b: [number, number, number, number],
     tolerance: number,
   ) {
+    const dr = Math.abs(a[0] - b[0]);
+    const dg = Math.abs(a[1] - b[1]);
+    const db = Math.abs(a[2] - b[2]);
+    const da = Math.abs(a[3] - b[3]);
     return (
-      Math.abs(a[0] - b[0]) <= tolerance &&
-      Math.abs(a[1] - b[1]) <= tolerance &&
-      Math.abs(a[2] - b[2]) <= tolerance &&
-      Math.abs(a[3] - b[3]) <= tolerance
+      dr <= tolerance &&
+      dg <= tolerance &&
+      db <= tolerance &&
+      da <= tolerance
     );
   }
 }
