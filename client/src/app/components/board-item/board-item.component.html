@@ -1,9 +1,24 @@
 <div class="board-item">
-  <input [(ngModel)]="board.title" />
+  <div class="board-preview">
+    <canvas #previewCanvas class="board-preview-canvas" width="240" height="140"></canvas>
+    <div class="board-preview-empty" *ngIf="previewEmpty">Empty board</div>
+  </div>
+  <input
+    [value]="titleDraft"
+    [readonly]="!isEditing"
+    [class.readonly]="!isEditing"
+    (input)="onTitleInput($event)"
+    (keydown)="onTitleKeydown($event)"
+  />
   <div class="board-buttons">
     <button (click)="onOpen()">Open</button>
     <button (click)="onShare()">Share</button>
-    <button (click)="onRename()">Rename</button>
-    <button class="danger" (click)="onDelete()">Delete</button>
+    <button (click)="onRename()">{{ isEditing ? 'Save' : 'Rename' }}</button>
+    <button *ngIf="isEditing" (click)="cancelRename()">Cancel</button>
+    <button class="danger" *ngIf="isOwner" (click)="onDelete()">Delete</button>
+  </div>
+  <div class="board-meta" *ngIf="isShared">
+    <span>Shared by {{ ownerLabel }}</span>
+    <button class="ghost" (click)="onDisconnect()">Disconnect</button>
   </div>
 </div>

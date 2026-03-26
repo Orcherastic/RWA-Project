@@ -21,10 +21,12 @@
     <app-board-item
       *ngFor="let board of boards"
       [board]="board"
+      [currentUserId]="currentUserId"
       (open)="openBoard($event)"
       (share)="promptShare($event)"
       (rename)="renameBoard($event.board, $event.title)"
       (remove)="deleteBoard($event)"
+      (disconnect)="disconnectBoard($event)"
     ></app-board-item>
   </div>
 </div>

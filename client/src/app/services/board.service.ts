@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { AuthService } from '../auth/auth.service';
+import { BoardInvite } from '../models/board-invite';
 
 @Injectable({
   providedIn: 'root'
@@ -55,6 +56,29 @@ export class BoardService {
     );
   }
 
+  getInvites(): Observable<BoardInvite[]> {
+    return this.http.get<BoardInvite[]>(
+      `${this.apiUrl}/invites`,
+      this.authOptions(),
+    );
+  }
+
+  acceptInvite(inviteId: number): Observable<any> {
+    return this.http.post(
+      `${this.apiUrl}/invites/${inviteId}/accept`,
+      {},
+      this.authOptions(),
+    );
+  }
+
+  declineInvite(inviteId: number): Observable<any> {
+    return this.http.post(
+      `${this.apiUrl}/invites/${inviteId}/decline`,
+      {},
+      this.authOptions(),
+    );
+  }
+
   updateBoardContent(boardId: number, content: string) {
     return this.http.put(
       `${this.apiUrl}/${boardId}/content`,
@@ -73,6 +97,14 @@ export class BoardService {
 
   deleteBoard(id: number): Observable<void> {
     return this.http.delete<void>(`${this.apiUrl}/${id}`, this.authOptions());
+  }
+
+  leaveBoard(id: number): Observable<any> {
+    return this.http.post(
+      `${this.apiUrl}/${id}/leave`,
+      {},
+      this.authOptions(),
+    );
   }
 
   async fetchServerStatus(): Promise<{ ok: boolean; message: string }> {

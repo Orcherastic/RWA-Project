@@ -30,6 +30,24 @@ export class BoardController {
     return this.boardService.findAllForUser(userId);
   }
 
+  @Get('invites')
+  async getInvites(@Req() req: AuthRequest) {
+    const userId = req.user.userId;
+    return this.boardService.getPendingInvites(userId);
+  }
+
+  @Post('invites/:id/accept')
+  async acceptInvite(@Param('id') id: string, @Req() req: AuthRequest) {
+    const userId = req.user.userId;
+    return this.boardService.acceptInvite(Number(id), userId);
+  }
+
+  @Post('invites/:id/decline')
+  async declineInvite(@Param('id') id: string, @Req() req: AuthRequest) {
+    const userId = req.user.userId;
+    return this.boardService.declineInvite(Number(id), userId);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @Req() req: AuthRequest) {
     const userId = req.user.userId;
@@ -71,6 +89,12 @@ export class BoardController {
   ) {
     const userId = req.user.userId;
     return this.boardService.updateContent(Number(id), content, userId);
+  }
+
+  @Post(':id/leave')
+  async leaveBoard(@Param('id') id: string, @Req() req: AuthRequest) {
+    const userId = req.user.userId;
+    return this.boardService.leaveBoard(Number(id), userId);
   }
 
   @Delete(':id')
