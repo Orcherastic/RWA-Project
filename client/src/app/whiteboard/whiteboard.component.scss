@@ -1,20 +1,26 @@
 .whiteboard-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0;
   margin: 0;
-  padding: 12px 0 16px;
-  min-height: calc(100vh - 80px);
+  padding: 0;
+  min-height: 100vh;
   width: 100vw;
   max-width: none;
   height: 100%;
 }
 
 .whiteboard-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 0 8px 12px;
+  padding: 9px 24px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--gray-200);
 }
 
 .topbar-left {
@@ -25,9 +31,9 @@
 
 .topbar-title {
   font-family: var(--font-heading);
+  font-size: 20px;
   font-weight: 700;
-  font-size: 18px;
-  color: var(--gray-900);
+  letter-spacing: 0.3px;
 }
 
 .topbar-right {
@@ -43,8 +49,9 @@
   gap: 0;
   align-items: stretch;
   padding: 0;
-  height: calc(100vh - 96px);
-  //flex: 1;
+  height: calc(100vh - 73px);
+  min-height: 0;
+  margin-top: 12px;
   width: 100vw;
   max-width: none;
 }
@@ -417,14 +424,25 @@
 }
 
 .draw-canvas {
+  position: relative;
+  z-index: 1;
   display: block;
   background-color: transparent;
 }
 
 .board-container.grid-on {
+  background-image: none;
+}
+
+.board-container.grid-on::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
   background-image:
-    linear-gradient(to right, rgba(15, 23, 42, 0.04) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
+    linear-gradient(to right, rgba(15, 23, 42, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15, 23, 42, 0.08) 1px, transparent 1px);
   background-size: 24px 24px;
 }
 
@@ -432,11 +450,13 @@
   position: absolute;
   top: 0;
   left: 0;
+  z-index: 3;
   pointer-events: none;
 }
 
 .draw-blocked {
   position: absolute;
+  z-index: 4;
   top: 8px;
   left: 8px;
   padding: 6px 10px;

@@ -206,6 +206,7 @@ export class BoardGateway {
             x2: s.x2,
             y2: s.y2,
             color: s.color,
+            fillColor: typeof s?.fillColor === 'string' ? s.fillColor : null,
             lineWidth: s.lineWidth,
             tool: 'brush',
             layerId,
@@ -322,6 +323,7 @@ export class BoardGateway {
           x2: data.x2,
           y2: data.y2,
           color: data.color,
+          fillColor: typeof data.fillColor === 'string' ? data.fillColor : null,
           lineWidth: data.lineWidth,
           tool: 'brush',
           layerId,
@@ -454,6 +456,7 @@ export class BoardGateway {
           x2: seg.x2,
           y2: seg.y2,
           color: seg.color,
+          fillColor: typeof seg.fillColor === 'string' ? seg.fillColor : null,
           lineWidth: seg.lineWidth,
           tool: 'brush',
           layerId: seg.layerId,
@@ -640,6 +643,10 @@ export class BoardGateway {
       y2: data.y2,
       shapeType: data.shapeType ?? state.items[idx].shapeType,
       color: data.color ?? state.items[idx].color,
+      fillColor:
+        data.fillColor === null || typeof data.fillColor === 'string'
+          ? data.fillColor
+          : state.items[idx].fillColor,
       lineWidth: data.lineWidth ?? state.items[idx].lineWidth,
     };
     this.boardStates.set(boardId, state);
@@ -647,6 +654,30 @@ export class BoardGateway {
     this.scheduleSave(boardId);
     this.server.to(`board-${boardId}`).emit('shape:update', {
       ...state.items[idx],
+      version,
+    });
+  }
+
+  @SubscribeMessage('shape:delete')
+  handleShapeDelete(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { id?: string },
+  ) {
+    const boardId = this.boardRooms.get(client.id);
+    if (!boardId) return;
+    if (!data?.id) return;
+
+    const state = this.boardStates.get(boardId);
+    if (!state) return;
+    const idx = state.items.findIndex((s) => s.type === 'shape' && s.id === data.id);
+    if (idx < 0) return;
+
+    state.items.splice(idx, 1);
+    this.boardStates.set(boardId, state);
+    const version = this.bumpVersion(boardId);
+    this.scheduleSave(boardId);
+    client.to(`board-${boardId}`).emit('shape:delete', {
+      id: data.id,
       version,
     });
   }
