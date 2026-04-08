@@ -1,5 +1,6 @@
 import {
   AfterViewInit,
+  ChangeDetectorRef,
   Component,
   ElementRef,
   EventEmitter,
@@ -35,6 +36,8 @@ export class BoardItemComponent implements AfterViewInit, OnChanges {
   titleDraft = '';
   previewEmpty = true;
 
+  constructor(private readonly cdr: ChangeDetectorRef) {}
+
   get ownerId() {
     return this.board?.ownerId ?? this.board?.owner?.id ?? null;
   }
@@ -64,6 +67,7 @@ export class BoardItemComponent implements AfterViewInit, OnChanges {
   ngAfterViewInit() {
     this.syncTitleDraft();
     this.renderPreview();
+    this.cdr.detectChanges();
   }
 
   ngOnChanges(changes: SimpleChanges) {
