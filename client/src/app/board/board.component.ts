@@ -72,13 +72,13 @@ export class BoardComponent implements OnInit, OnDestroy {
     const userId$ = of(this.authService.getUserId());
     combineLatest([boards$, userId$])
       .pipe(
-        map(([boards, userId]) =>
-          userId
-            ? boards.filter(
-                (board) => (board.ownerId ?? board.owner?.id) === userId,
-              ).length
-            : 0,
-        ),
+        map(([boards, userId]) => {
+          if (!userId) return 0;
+          return boards.reduce((count, board) => {
+            const ownerId = board.ownerId ?? board.owner?.id;
+            return ownerId === userId ? count + 1 : count;
+          }, 0);
+        }),
         takeUntil(this.destroy$),
       )
       .subscribe((count) => {
