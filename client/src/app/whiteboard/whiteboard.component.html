@@ -27,7 +27,7 @@
         <input
           type="range"
           [ngModel]="lineWidth"
-          (ngModelChange)="lineWidth = +$event"
+          (ngModelChange)="updateLineWidth($event)"
           min="1"
           max="40"
         />

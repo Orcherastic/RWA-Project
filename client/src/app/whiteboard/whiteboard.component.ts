@@ -6,6 +6,16 @@ import { SocketService } from '../services/socket.service';
 import { fromEvent, throttleTime } from 'rxjs';
 import { CursorService } from '../services/cursor.service';
 import { AuthService } from '../auth/auth.service';
+import { Store } from '@ngrx/store';
+import {
+  hydrateWhiteboardUi,
+  setActiveLayerId,
+  setCurrentColor,
+  setCurrentTool,
+  setLineWidth,
+  toggleGrid as toggleGridAction,
+} from '../state/whiteboard-ui/whiteboard-ui.actions';
+import { selectWhiteboardUiState } from '../state/whiteboard-ui/whiteboard-ui.selectors';
 
 @Component({
   selector: 'app-whiteboard',
@@ -78,6 +88,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   toggleGrid() {
     this.showGrid = !this.showGrid;
+    this.store.dispatch(toggleGridAction());
   }
 
   private lastX: number | null = null;
@@ -109,12 +120,25 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     private readonly route: ActivatedRoute,
     private readonly socketService: SocketService,
     private readonly cursorService: CursorService,
-    private readonly authService: AuthService
+    private readonly authService: AuthService,
+    private readonly store: Store,
   ) {}
   
   ngOnInit() {
     this.boardId = Number(this.route.snapshot.paramMap.get('id'));
     this.userId = this.authService.getUserId();
+    this.store.dispatch(hydrateWhiteboardUi());
+    this.subscriptions.push(
+      this.store.select(selectWhiteboardUiState).subscribe((uiState) => {
+        this.currentTool = uiState.currentTool;
+        this.showGrid = uiState.showGrid;
+        this.lineWidth = uiState.lineWidth;
+        this.currentColor = uiState.currentColor;
+        if (uiState.activeLayerId) {
+          this.activeLayerId = uiState.activeLayerId;
+        }
+      }),
+    );
     this.subscriptions.push(
       this.socketService.listen('connect').subscribe(() => {
         this.connectionStatus = 'online';
@@ -147,7 +171,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
             locked: l.locked === true,
           }));
           if (!this.layers.find((l) => l.id === this.activeLayerId)) {
-            this.activeLayerId = this.layers[0].id;
+            this.syncActiveLayerId(this.layers[0].id);
           }
           const keep = new Set(this.layers.map((l) => l.id));
           for (const key of this.layerCanvases.keys()) {
@@ -261,7 +285,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
           locked: l.locked === true,
         }));
         if (!this.layers.find((l) => l.id === this.activeLayerId)) {
-          this.activeLayerId = this.layers[0].id;
+          this.syncActiveLayerId(this.layers[0].id);
         }
         const keep = new Set(this.layers.map((l) => l.id));
         for (const key of this.layerCanvases.keys()) {
@@ -1026,6 +1050,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   setTool(tool: Tool) {
     this.currentTool = tool;
+    this.store.dispatch(setCurrentTool({ tool }));
     if (this.lastCursorX !== null && this.lastCursorY !== null) {
       this.socketService.emit('cursor:move', {
         boardId: this.boardId,
@@ -1050,7 +1075,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   }
 
   selectLayer(id: string) {
-    this.activeLayerId = id;
+    this.syncActiveLayerId(id);
   }
 
   startRenameLayer(layer: Layer) {
@@ -1124,11 +1149,24 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   setColor(color: string) {
     this.currentColor = color;
+    this.store.dispatch(setCurrentColor({ color }));
     this.pushRecentColor(color);
+  }
+
+  updateLineWidth(value: number | string) {
+    const lineWidth = Number(value);
+    if (Number.isNaN(lineWidth)) return;
+    this.lineWidth = lineWidth;
+    this.store.dispatch(setLineWidth({ lineWidth }));
   }
 
   onColorInput(value: string) {
     this.setColor(value);
+  }
+
+  private syncActiveLayerId(layerId: string) {
+    this.activeLayerId = layerId;
+    this.store.dispatch(setActiveLayerId({ layerId }));
   }
 
   undo() {
