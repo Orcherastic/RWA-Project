@@ -36,6 +36,38 @@ export class BoardController {
     return this.boardService.getPendingInvites(userId);
   }
 
+  @Get(':id/members')
+  async getMembers(@Param('id') id: string, @Req() req: AuthRequest) {
+    const userId = req.user.userId;
+    return this.boardService.getMembers(Number(id), userId);
+  }
+
+  @Delete(':id/members/:userId')
+  async removeMember(
+    @Param('id') id: string,
+    @Param('userId') targetUserId: string,
+    @Req() req: AuthRequest,
+  ) {
+    const userId = req.user.userId;
+    return this.boardService.removeMember(Number(id), Number(targetUserId), userId);
+  }
+
+  @Get(':id/invites')
+  async getBoardInvites(@Param('id') id: string, @Req() req: AuthRequest) {
+    const userId = req.user.userId;
+    return this.boardService.getBoardInvites(Number(id), userId);
+  }
+
+  @Delete(':id/invites/:inviteId')
+  async cancelInvite(
+    @Param('id') id: string,
+    @Param('inviteId') inviteId: string,
+    @Req() req: AuthRequest,
+  ) {
+    const userId = req.user.userId;
+    return this.boardService.cancelInvite(Number(id), Number(inviteId), userId);
+  }
+
   @Post('invites/:id/accept')
   async acceptInvite(@Param('id') id: string, @Req() req: AuthRequest) {
     const userId = req.user.userId;

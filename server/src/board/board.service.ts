@@ -225,6 +225,99 @@ export class BoardService {
       .getMany();
   }
 
+  async getMembers(boardId: number, userId: number): Promise<BoardMember[]> {
+    const board = await this.boardRepo.findOne({
+      where: { id: boardId },
+      relations: ['owner', 'members', 'members.user'],
+    });
+    if (!board) throw new NotFoundException('Board not found');
+
+    const isOwner = board.owner.id === userId;
+    const isMember = board.members.some((m) => m.user.id === userId);
+    if (!isOwner && !isMember) {
+      throw new ForbiddenException('You do not have access to this board');
+    }
+
+    return board.members;
+  }
+
+  async removeMember(boardId: number, targetUserId: number, ownerId: number) {
+    const board = await this.boardRepo.findOne({
+      where: { id: boardId },
+      relations: ['owner'],
+    });
+    if (!board) throw new NotFoundException('Board not found');
+    if (board.owner.id !== ownerId) {
+      throw new ForbiddenException('Not your board');
+    }
+    if (targetUserId === board.owner.id) {
+      throw new BadRequestException('Owner cannot be removed');
+    }
+
+    const membership = await this.boardMemberRepo.findOne({
+      where: { board: { id: boardId }, user: { id: targetUserId } },
+      relations: ['board', 'user'],
+    });
+    if (!membership) {
+      throw new NotFoundException('Member not found on this board');
+    }
+
+    await this.boardMemberRepo.remove(membership);
+    return { message: 'Member removed' };
+  }
+
+  async getBoardInvites(boardId: number, ownerId: number): Promise<BoardInvite[]> {
+    const board = await this.boardRepo.findOne({
+      where: { id: boardId },
+      relations: ['owner'],
+    });
+    if (!board) throw new NotFoundException('Board not found');
+    if (board.owner.id !== ownerId) {
+      throw new ForbiddenException('Not your board');
+    }
+
+    return this.boardInviteRepo
+      .createQueryBuilder('invite')
+      .leftJoin('invite.board', 'board')
+      .leftJoin('invite.inviter', 'inviter')
+      .leftJoin('invite.invitee', 'invitee')
+      .where('board.id = :boardId', { boardId })
+      .select([
+        'invite',
+        'board.id',
+        'inviter.id',
+        'inviter.email',
+        'inviter.displayName',
+        'invitee.id',
+        'invitee.email',
+        'invitee.displayName',
+      ])
+      .orderBy('invite.createdAt', 'DESC')
+      .getMany();
+  }
+
+  async cancelInvite(boardId: number, inviteId: number, ownerId: number) {
+    const board = await this.boardRepo.findOne({
+      where: { id: boardId },
+      relations: ['owner'],
+    });
+    if (!board) throw new NotFoundException('Board not found');
+    if (board.owner.id !== ownerId) {
+      throw new ForbiddenException('Not your board');
+    }
+
+    const invite = await this.boardInviteRepo.findOne({
+      where: { id: inviteId },
+      relations: ['board'],
+    });
+    if (!invite || invite.board.id !== boardId) {
+      throw new NotFoundException('Invite not found on this board');
+    }
+
+    await this.boardInviteRepo.remove(invite);
+    return { message: 'Invite canceled' };
+  }
+
   async acceptInvite(inviteId: number, userId: number) {
     const invite = await this.boardInviteRepo.findOne({
       where: { id: inviteId },

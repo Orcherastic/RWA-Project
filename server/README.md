@@ -44,6 +44,24 @@ $ npm run start:dev
 $ npm run start:prod
 ```
 
+## Database migrations
+
+This project uses TypeORM migrations with `synchronize: false`.
+
+```bash
+# show pending/applied migrations
+$ npm run migration:show
+
+# apply migrations
+$ npm run migration:run
+
+# revert the last migration
+$ npm run migration:revert
+
+# generate a new migration from entity changes
+$ npm run migration:generate -- src/migrations/DescribeChange
+```
+
 ## Run tests
 
 ```bash

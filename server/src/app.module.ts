@@ -5,6 +5,7 @@ import { UserModule } from './user/user.module';
 import { AppController } from './app.controller';
 import { BoardModule } from './board/board.module';
 import { AuthModule } from './auth/auth.module';
+import { join } from 'path';
 //import { BoardMember } from 'src/board/entities/board-member.entity';
 
 @Module({
@@ -21,7 +22,8 @@ import { AuthModule } from './auth/auth.module';
         password: config.get('DB_PASSWORD'),
         database: config.get('DB_NAME'),
         autoLoadEntities: true,
-        synchronize: true,
+        synchronize: false,
+        migrations: [join(__dirname, 'migrations/*{.ts,.js}')],
       }),
     }),
     UserModule,
