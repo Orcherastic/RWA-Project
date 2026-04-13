@@ -22,7 +22,11 @@ export class SocketService {
 
   listen(event: string): Observable<any> {
     return new Observable((subscriber) => {
-      this.socket.on(event, (data) => subscriber.next(data));
+      const handler = (data: any) => subscriber.next(data);
+      this.socket.on(event, handler);
+      return () => {
+        this.socket.off(event, handler);
+      };
     });
   }
 }

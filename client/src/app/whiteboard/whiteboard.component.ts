@@ -3,7 +3,26 @@ import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { SocketService } from '../services/socket.service';
-import { fromEvent, throttleTime } from 'rxjs';
+import {
+  EMPTY,
+  Subject,
+  fromEvent,
+  merge,
+  timer,
+  throttleTime,
+} from 'rxjs';
+import {
+  catchError,
+  debounceTime,
+  distinctUntilChanged,
+  filter,
+  map,
+  retry,
+  switchMap,
+  take,
+  takeUntil,
+  tap,
+} from 'rxjs/operators';
 import { CursorService } from '../services/cursor.service';
 import { AuthService } from '../auth/auth.service';
 import { Store } from '@ngrx/store';
@@ -16,6 +35,7 @@ import {
   toggleGrid as toggleGridAction,
 } from '../state/whiteboard-ui/whiteboard-ui.actions';
 import { selectWhiteboardUiState } from '../state/whiteboard-ui/whiteboard-ui.selectors';
+import { BoardService } from '../services/board.service';
 
 @Component({
   selector: 'app-whiteboard',
@@ -36,6 +56,9 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
 
   private cursorCtx!: CanvasRenderingContext2D;
   private readonly subscriptions: any[] = [];
+  private readonly destroy$ = new Subject<void>();
+  private readonly resyncTrigger$ = new Subject<void>();
+  private readonly boardStateArrived$ = new Subject<void>();
   private ctx!: CanvasRenderingContext2D;
   private drawing = false;
   private boardLoaded = false;
@@ -121,12 +144,15 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     private readonly socketService: SocketService,
     private readonly cursorService: CursorService,
     private readonly authService: AuthService,
+    private readonly boardService: BoardService,
     private readonly store: Store,
   ) {}
   
   ngOnInit() {
     this.boardId = Number(this.route.snapshot.paramMap.get('id'));
     this.userId = this.authService.getUserId();
+    this.setupResyncPipeline();
+    this.setupAutosavePipeline();
     this.store.dispatch(hydrateWhiteboardUi());
     this.subscriptions.push(
       this.store.select(selectWhiteboardUiState).subscribe((uiState) => {
@@ -143,7 +169,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       this.socketService.listen('connect').subscribe(() => {
         this.connectionStatus = 'online';
         this.socketService.emit('joinBoard', this.boardId);
-        this.socketService.emit('board:resync', { boardId: this.boardId });
+        this.resyncTrigger$.next();
       })
     );
     this.subscriptions.push(
@@ -186,6 +212,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         this.redoStack = [];
         this.boardLoaded = true;
         this.boardVersion = typeof version === 'number' ? version : 0;
+        this.boardStateArrived$.next();
         this.markAllLayersDirty();
         this.requestRedraw();
       })
@@ -304,40 +331,49 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.startCursorRenderLoop();
 
     fromEvent<MouseEvent>(canvas, 'mousemove')
-    .pipe(throttleTime(33)) // ~30fps
-    .subscribe(event => {
-      if (!this.boardLoaded) return;
-      const { x, y, inside } = this.getCanvasCoords(event);
-      if (!inside) return;
-      this.lastCursorX = x;
-      this.lastCursorY = y;
-
-      this.socketService.emit('cursor:move', {
-        boardId: this.boardId,
-        x,
-        y,
-        tool: this.currentTool,
+      .pipe(
+        map((event) => this.getCanvasCoords(event)),
+        filter(({ inside }) => inside),
+        map(({ x, y }) => ({
+          x: Math.round(x * 2) / 2,
+          y: Math.round(y * 2) / 2,
+          tool: this.currentTool,
+        })),
+        distinctUntilChanged(
+          (a, b) => a.x === b.x && a.y === b.y && a.tool === b.tool,
+        ),
+        throttleTime(33),
+        takeUntil(this.destroy$),
+      )
+      .subscribe(({ x, y, tool }) => {
+        this.lastCursorX = x;
+        this.lastCursorY = y;
+        if (!this.boardLoaded) return;
+        this.socketService.emit('cursor:move', {
+          boardId: this.boardId,
+          x,
+          y,
+          tool,
+        });
       });
-    });
 
-    fromEvent<MouseEvent>(canvas, 'mousemove').subscribe((event) => {
-      const { x, y, inside } = this.getCanvasCoords(event);
-      if (!inside) return;
-      this.lastCursorX = x;
-      this.lastCursorY = y;
-    });
-
-    fromEvent<MouseEvent>(canvas, 'mouseleave').subscribe(() => {
-      this.lastCursorX = null;
-      this.lastCursorY = null;
-      this.socketService.emit('cursor:leave', {
-        boardId: this.boardId,
+    fromEvent<MouseEvent>(canvas, 'mouseleave')
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(() => {
+        this.lastCursorX = null;
+        this.lastCursorY = null;
+        this.socketService.emit('cursor:leave', {
+          boardId: this.boardId,
+        });
       });
-    });
 
   }
 
   ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
+    this.resyncTrigger$.complete();
+    this.boardStateArrived$.complete();
     this.subscriptions.forEach(sub => sub.unsubscribe());
     this.socketService.emit('leaveBoard', {});
     this.socketService.emit('cursor:leave', {
@@ -1454,7 +1490,60 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   }
 
   private requestResync() {
-    this.socketService.emit('board:resync', { boardId: this.boardId });
+    this.resyncTrigger$.next();
+  }
+
+  private setupResyncPipeline() {
+    this.resyncTrigger$
+      .pipe(
+        switchMap(() =>
+          timer(0, 1200).pipe(
+            take(3),
+            tap(() => {
+              this.socketService.emit('board:resync', { boardId: this.boardId });
+            }),
+            // Stop retries as soon as fresh board state arrives.
+            takeUntil(this.boardStateArrived$),
+          ),
+        ),
+        takeUntil(this.destroy$),
+      )
+      .subscribe();
+  }
+
+  private setupAutosavePipeline() {
+    const mutationEvents$ = merge(
+      this.socketService.listen('draw'),
+      this.socketService.listen('shape:update'),
+      this.socketService.listen('shape:delete'),
+      this.socketService.listen('undo'),
+      this.socketService.listen('redo'),
+      this.socketService.listen('clear'),
+      this.socketService.listen('layers:update'),
+    );
+
+    mutationEvents$
+      .pipe(
+        debounceTime(700),
+        filter(() => this.boardLoaded && this.boardId > 0),
+        map(() => this.serializeBoardContent()),
+        switchMap((content) =>
+          this.boardService.updateBoardContent(this.boardId, content).pipe(
+            retry(2),
+            catchError(() => EMPTY),
+          ),
+        ),
+        takeUntil(this.destroy$),
+      )
+      .subscribe();
+  }
+
+  private serializeBoardContent() {
+    return JSON.stringify({
+      items: this.strokes,
+      layers: this.layers,
+      savedAt: Date.now(),
+    });
   }
 
   private applyAlpha(color: string, alpha: number) {
