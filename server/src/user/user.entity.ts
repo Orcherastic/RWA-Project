@@ -23,6 +23,12 @@ export class User {
   @Column({ nullable: true })
   displayName?: string;
 
+  @Column({ type: 'varchar', nullable: true })
+  refreshTokenHash?: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  refreshTokenExpiresAt?: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

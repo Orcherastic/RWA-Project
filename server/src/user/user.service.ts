@@ -40,6 +40,35 @@ export class UserService {
     return this.repo.findOneBy({ email });
   }
 
+  async findByIdRaw(id: number) {
+    return this.repo.findOneBy({ id });
+  }
+
+  async setRefreshToken(userId: number, refreshToken: string, expiresAt: Date) {
+    const user = await this.repo.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException(`User ${userId} not found`);
+    user.refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+    user.refreshTokenExpiresAt = expiresAt;
+    await this.repo.save(user);
+  }
+
+  async validateRefreshToken(userId: number, refreshToken: string) {
+    const user = await this.repo.findOneBy({ id: userId });
+    if (!user?.refreshTokenHash) return false;
+    if (!user.refreshTokenExpiresAt || user.refreshTokenExpiresAt.getTime() < Date.now()) {
+      return false;
+    }
+    return bcrypt.compare(refreshToken, user.refreshTokenHash);
+  }
+
+  async clearRefreshToken(userId: number) {
+    const user = await this.repo.findOneBy({ id: userId });
+    if (!user) return;
+    user.refreshTokenHash = null;
+    user.refreshTokenExpiresAt = null;
+    await this.repo.save(user);
+  }
+
   async update(id: number, dto: UpdateUserDto) {
     const user = await this.repo.findOneBy({ id });
     if (!user) throw new Error('User not found');

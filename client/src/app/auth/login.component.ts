@@ -37,8 +37,7 @@ export class LoginComponent {
     this.auth.login({ email: this.email, password: this.password })
       .subscribe({
         next: res => {
-          this.auth.saveToken(res.access_token);
-          if (res.user) this.auth.saveUser(res.user);
+          this.auth.saveAuth(res);
           this.router.navigate(['/boards']);
         },
         error: err => alert('Login failed: ' + (err?.error?.message || err.statusText))

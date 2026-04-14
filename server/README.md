@@ -62,6 +62,11 @@ $ npm run migration:revert
 $ npm run migration:generate -- src/migrations/DescribeChange
 ```
 
+## Auth environment
+
+Set `JWT_SECRET` for access tokens.  
+Optionally set `JWT_REFRESH_SECRET` to use a separate secret for refresh tokens.
+
 ## Run tests
 
 ```bash

@@ -6,7 +6,7 @@ import { AuthService } from '../auth/auth.service';
 export class AuthGuard implements CanActivate {
   constructor(private readonly auth: AuthService, private readonly router: Router) {}
   canActivate(): boolean {
-    if (this.auth.getToken()) return true;
+    if (this.auth.hasValidAccessToken()) return true;
     this.router.navigate(['/login']);
     return false;
   }

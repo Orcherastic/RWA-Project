@@ -44,8 +44,7 @@ export class RegisterComponent {
             password: this.password 
         }).subscribe({ 
             next: res => { 
-                this.auth.saveToken(res.access_token); 
-                if (res.user) this.auth.saveUser(res.user); 
+                this.auth.saveAuth(res); 
                 this.router.navigate(['/boards']); 
             }, 
             error: err => { 
