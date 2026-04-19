@@ -137,6 +137,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   private layerCanvases = new Map<string, HTMLCanvasElement>();
   private layerContexts = new Map<string, CanvasRenderingContext2D>();
   private dirtyLayers = new Set<string>();
+  private strokeSnapshots = new Map<string, LayerSnapshot>();
   private redrawScheduled = false;
 
   constructor(
@@ -210,6 +211,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         }
         this.undoStack = [];
         this.redoStack = [];
+        this.strokeSnapshots.clear();
         this.boardLoaded = true;
         this.boardVersion = typeof version === 'number' ? version : 0;
         this.boardStateArrived$.next();
@@ -252,11 +254,13 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.socketService.listen('undo').subscribe(({ strokeId, version }) => {
       if (this.shouldResync(version)) return;
       if (!strokeId) return;
-      const removed = this.strokes.filter((s) => s.strokeId === strokeId);
+      const removed = this.removeStrokeGroup(strokeId);
       if (removed.length === 0) return;
-      this.strokes = this.strokes.filter((s) => s.strokeId !== strokeId);
-      for (const item of removed) {
-        this.dirtyLayers.add(item.layerId);
+      const restored = this.restoreLayerFromSnapshot(strokeId);
+      if (!restored) {
+        for (const item of removed) {
+          this.dirtyLayers.add(item.layerId);
+        }
       }
       this.requestRedraw();
     });
@@ -266,6 +270,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       this.strokes = [];
       this.undoStack = [];
       this.redoStack = [];
+      this.strokeSnapshots.clear();
       this.clearStatus = null;
     });
     this.socketService.listen('clear:status').subscribe((status) => {
@@ -588,6 +593,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.lastX = x;
     this.lastY = y;
     this.activeStrokeId = this.createStrokeId();
+    this.captureLayerSnapshot(this.activeStrokeId, this.activeLayerId);
     this.activeStrokeBuffer = [];
 
     if (this.currentTool === 'fill') {
@@ -821,6 +827,8 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
         this.undoStack.push(this.activeStrokeBuffer);
         this.activeStrokeBuffer = [];
         this.activeStrokeId = null;
+      } else if (this.activeStrokeId) {
+        this.strokeSnapshots.delete(this.activeStrokeId);
       }
       if (
         this.isShapeTool(this.currentTool) &&
@@ -917,6 +925,9 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     if (this.isShapeTool(this.currentTool)) {
       this.shapeStart = null;
       this.previewShape = null;
+      if (this.activeStrokeId) {
+        this.strokeSnapshots.delete(this.activeStrokeId);
+      }
       this.activeStrokeId = null;
       return;
     }
@@ -926,12 +937,16 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.activeStrokeId = null;
     if (!strokeId) return;
 
-    const removed = this.strokes.filter((s) => s.strokeId === strokeId);
-    if (removed.length === 0) return;
-
-    this.strokes = this.strokes.filter((s) => s.strokeId !== strokeId);
-    for (const item of removed) {
-      this.dirtyLayers.add(item.layerId);
+    const removed = this.removeStrokeGroup(strokeId);
+    if (removed.length === 0) {
+      this.strokeSnapshots.delete(strokeId);
+      return;
+    }
+    const restored = this.restoreLayerFromSnapshot(strokeId);
+    if (!restored) {
+      for (const item of removed) {
+        this.dirtyLayers.add(item.layerId);
+      }
     }
     this.requestRedraw();
     this.socketService.emit('undo', { boardId: this.boardId, strokeId });
@@ -1082,6 +1097,7 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     this.layerCanvases.clear();
     this.layerContexts.clear();
     this.dirtyLayers.clear();
+    this.strokeSnapshots.clear();
   }
 
   setTool(tool: Tool) {
@@ -1242,10 +1258,12 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     }
     const strokeId = (first as DrawItem)?.strokeId;
     if (!strokeId) return;
-    const removed = this.strokes.filter((s) => s.strokeId === strokeId);
-    this.strokes = this.strokes.filter((s) => s.strokeId !== strokeId);
-    for (const item of removed) {
-      this.dirtyLayers.add(item.layerId);
+    const removed = this.removeStrokeGroup(strokeId);
+    const restored = this.restoreLayerFromSnapshot(strokeId);
+    if (!restored) {
+      for (const item of removed) {
+        this.dirtyLayers.add(item.layerId);
+      }
     }
     this.requestRedraw();
     this.socketService.emit('undo', { boardId: this.boardId, strokeId });
@@ -1293,6 +1311,10 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       return;
     }
     const items = group as DrawItem[];
+    const strokeId = (first as DrawItem)?.strokeId;
+    if (strokeId && items.length > 0) {
+      this.captureLayerSnapshot(strokeId, items[0].layerId);
+    }
     this.strokes.push(...items);
     for (const item of items) {
       const layerCtx = this.getLayerContext(item.layerId);
@@ -1315,7 +1337,6 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
       }
     }
     this.requestRedraw();
-    const strokeId = (first as DrawItem)?.strokeId;
     if (!strokeId) return;
     this.socketService.emit('redo', { boardId: this.boardId, strokeId, strokes: group });
     this.boardVersion += 1;
@@ -1414,6 +1435,84 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   private createSegmentId(strokeId: string) {
     this.strokeSeq += 1;
     return `${strokeId}-${this.strokeSeq}`;
+  }
+
+  private captureLayerSnapshot(strokeId: string, layerId: string) {
+    if (!strokeId || this.strokeSnapshots.has(strokeId)) return;
+    const layerCtx = this.getLayerContext(layerId);
+    const layerCanvas = this.getLayerCanvas(layerId);
+    if (!layerCtx) return;
+    try {
+      const imageData = layerCtx.getImageData(0, 0, layerCanvas.width, layerCanvas.height);
+      this.strokeSnapshots.set(strokeId, {
+        layerId,
+        imageData,
+        startIndex: this.strokes.length,
+      });
+    } catch {
+      // Ignore snapshot failures and fall back to rebuild path.
+    }
+  }
+
+  private restoreLayerFromSnapshot(strokeId: string) {
+    const snapshot = this.strokeSnapshots.get(strokeId);
+    if (!snapshot) return false;
+    const layerCtx = this.getLayerContext(snapshot.layerId);
+    const layerCanvas = this.getLayerCanvas(snapshot.layerId);
+    if (!layerCtx) {
+      this.strokeSnapshots.delete(strokeId);
+      return false;
+    }
+
+    try {
+      layerCtx.clearRect(0, 0, layerCanvas.width, layerCanvas.height);
+      layerCtx.putImageData(snapshot.imageData, 0, 0);
+      this.replayLayerFromIndex(snapshot.layerId, snapshot.startIndex);
+      this.dirtyLayers.delete(snapshot.layerId);
+      this.strokeSnapshots.delete(strokeId);
+      return true;
+    } catch {
+      this.strokeSnapshots.delete(strokeId);
+      return false;
+    }
+  }
+
+  private replayLayerFromIndex(layerId: string, startIndex: number) {
+    const layerCtx = this.getLayerContext(layerId);
+    const layerCanvas = this.getLayerCanvas(layerId);
+    if (!layerCtx) return;
+
+    const safeStart = Math.max(0, Math.min(startIndex, this.strokes.length));
+    for (let i = safeStart; i < this.strokes.length; i += 1) {
+      const stroke = this.strokes[i];
+      if (stroke.layerId !== layerId) continue;
+      if (stroke.type === 'stroke') {
+        this.applyStrokeStyleTo(layerCtx, stroke);
+        layerCtx.beginPath();
+        layerCtx.moveTo(stroke.fromX, stroke.fromY);
+        layerCtx.lineTo(stroke.toX, stroke.toY);
+        layerCtx.stroke();
+        this.resetCompositeTo(layerCtx);
+      } else if (stroke.type === 'shape') {
+        this.drawShape(layerCtx, stroke);
+      } else {
+        this.applyFillOnContext(layerCtx, stroke, layerCanvas.width, layerCanvas.height);
+      }
+    }
+  }
+
+  private removeStrokeGroup(strokeId: string) {
+    const kept: DrawItem[] = [];
+    const removed: DrawItem[] = [];
+    for (const item of this.strokes) {
+      if (item.strokeId === strokeId) {
+        removed.push(item);
+      } else {
+        kept.push(item);
+      }
+    }
+    this.strokes = kept;
+    return removed;
   }
 
   private pushRecentColor(color: string) {
@@ -2246,3 +2345,9 @@ interface ShapeDeleteAction {
 type DrawAction = DrawItem | ShapeUpdateAction | ShapeDeleteAction;
 
 type ResizeHandle = 'nw' | 'ne' | 'sw' | 'se' | 'line-start' | 'line-end';
+
+interface LayerSnapshot {
+  layerId: string;
+  imageData: ImageData;
+  startIndex: number;
+}

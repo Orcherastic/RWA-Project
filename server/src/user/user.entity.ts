@@ -7,7 +7,7 @@ import {
   OneToMany,
 } from 'typeorm';
 import { Board } from '../board/entities/board.entity';
-import { BoardMember } from 'src/board/entities/board-member.entity';
+import { BoardMember } from '../board/entities/board-member.entity';
 
 @Entity()
 export class User {

@@ -500,20 +500,41 @@
 
 @media (max-width: 1024px) {
   .whiteboard-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    gap: 10px;
+    padding: 0 8px 8px;
   }
 
   .toolbox {
     position: static;
     height: auto;
+    max-height: 28vh;
+    overflow: auto;
+    border-radius: 12px;
+    min-width: 0;
   }
 
   .board-area {
-    justify-content: flex-start;
+    justify-content: stretch;
+    min-height: 42vh;
+    grid-row: 1;
   }
 
   .toolbox.toolbox-right {
     position: static;
     height: auto;
+    max-height: 28vh;
+    overflow: auto;
+    border-radius: 12px;
+    min-width: 0;
+  }
+
+  .layers {
+    min-width: 0;
+  }
+
+  .layers-list {
+    max-height: none;
   }
 }
