@@ -6,13 +6,35 @@ This document maps each exam requirement to concrete implementation points in th
 
 1. RxJS
 - `client/src/app/whiteboard/whiteboard.component.ts`
-  - cursor stream: `fromEvent`, `map`, `filter`, `distinctUntilChanged`, `throttleTime`, `takeUntil`
-  - autosave stream: `merge`, `debounceTime`, `switchMap`, `retry`, `catchError`
-  - resync stream: `timer`, `switchMap`, `take`, `takeUntil`
+  - cursor stream: 
+    `fromEvent`, 
+    `map`, 
+    `filter`, 
+    `distinctUntilChanged`, 
+    `throttleTime`, 
+    `takeUntil`
+  - autosave stream: 
+    `merge`, 
+    `debounceTime`, 
+    `switchMap`, 
+    `retry`, 
+    `catchError`
+  - resync stream: 
+    `timer`, 
+    `switchMap`, 
+    `take`, 
+    `takeUntil`
 - `client/src/app/board/board.component.ts`
-  - `merge`, `zip`, `take`, `takeUntil`, `map`
+  - `merge`, 
+    `zip`, 
+    `take`, 
+    `takeUntil`, 
+    `map`
 - `client/src/app/state/boards/boards.effects.ts`
-  - `switchMap`, `mergeMap`, `map`, `catchError`
+  - `switchMap`, 
+    `mergeMap`, 
+    `map`, 
+    `catchError`
 
 2. Angular
 - Components and services:
@@ -56,8 +78,12 @@ This document maps each exam requirement to concrete implementation points in th
   - `fetchServerStatus(): Promise<...>` using `fetch`
 
 3. Operators (`switchMap`, `take`, `takeUntil`, `zip`, `merge` + combinational)
-- `switchMap`: `boards.effects.ts`, `whiteboard.component.ts`
-- `take`, `takeUntil`, `zip`, `merge`: `board.component.ts`, `whiteboard.component.ts`
+- `switchMap`: 
+  `boards.effects.ts`, 
+  `whiteboard.component.ts`
+- `take`, `takeUntil`, `zip`, `merge`: 
+  `board.component.ts`, 
+  `whiteboard.component.ts`
 - combinational usage:
   - `combineLatest` in `board.component.ts`
 
@@ -82,8 +108,10 @@ This document maps each exam requirement to concrete implementation points in th
 2. DB with Docker:
 - `docker-compose.yml`
 3. CRUD operations:
-- Users CRUD: `server/src/user/user.controller.ts` + service
-- Boards CRUD + content/share/leave: `server/src/board/board.controller.ts` + service
+- Users CRUD: 
+  `server/src/user/user.controller.ts` + service
+- Boards CRUD + content/share/leave: 
+  `server/src/board/board.controller.ts` + service
 - Relation entity CRUD coverage:
   - members list/remove
   - invites list/cancel/accept/decline
