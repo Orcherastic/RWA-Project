@@ -83,7 +83,6 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
   editingLayerId: string | null = null;
   layerNameDraft = '';
   layerNameError = '';
-  shareCopied = false;
   showGrid = false;
 
   currentColor = '#000000';
@@ -1362,29 +1361,6 @@ export class WhiteboardComponent implements AfterViewInit, OnInit {
     a.href = dataUrl;
     a.download = `board-${this.boardId}.png`;
     a.click();
-  }
-
-  async copyShareLink() {
-    const url = window.location.href;
-    try {
-      await navigator.clipboard.writeText(url);
-      this.shareCopied = true;
-      setTimeout(() => {
-        this.shareCopied = false;
-      }, 1500);
-    } catch {
-      // fallback
-      const input = document.createElement('input');
-      input.value = url;
-      document.body.appendChild(input);
-      input.select();
-      document.execCommand('copy');
-      document.body.removeChild(input);
-      this.shareCopied = true;
-      setTimeout(() => {
-        this.shareCopied = false;
-      }, 1500);
-    }
   }
 
   private applyStrokeStyle(stroke: { color?: string; lineWidth?: number; tool?: string }) {

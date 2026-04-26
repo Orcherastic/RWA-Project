@@ -12,9 +12,9 @@
   />
   <div class="board-buttons">
     <button (click)="onOpen()">Open</button>
-    <button (click)="onShare()">Share</button>
-    <button (click)="onRename()">{{ isEditing ? 'Save' : 'Rename' }}</button>
-    <button *ngIf="isEditing" (click)="cancelRename()">Cancel</button>
+    <button *ngIf="isOwner" (click)="onShare()">Share</button>
+    <button *ngIf="isOwner" (click)="onRename()">{{ isEditing ? 'Save' : 'Rename' }}</button>
+    <button *ngIf="isOwner && isEditing" (click)="cancelRename()">Cancel</button>
     <button class="danger" *ngIf="isOwner" (click)="onDelete()">Delete</button>
   </div>
   <div class="board-meta" *ngIf="isShared">

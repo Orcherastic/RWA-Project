@@ -61,6 +61,7 @@ export class BoardItemComponent implements AfterViewInit, OnChanges {
   }
 
   onShare() {
+    if (!this.isOwner) return;
     this.share.emit(this.board);
   }
 
@@ -80,6 +81,7 @@ export class BoardItemComponent implements AfterViewInit, OnChanges {
   }
 
   startRename() {
+    if (!this.isOwner) return;
     this.isEditing = true;
     this.syncTitleDraft();
   }
@@ -90,6 +92,7 @@ export class BoardItemComponent implements AfterViewInit, OnChanges {
   }
 
   commitRename() {
+    if (!this.isOwner) return;
     const next = this.titleDraft.trim();
     if (!next) return;
     this.rename.emit({ board: this.board, title: next });
