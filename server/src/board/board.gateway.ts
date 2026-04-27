@@ -18,7 +18,7 @@ console.log('🚀 BoardGateway file loaded');
 })
 export class BoardGateway {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   private readonly boardRooms = new Map<string, number>();
   private readonly boardStates = new Map<
